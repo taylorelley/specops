@@ -388,7 +388,9 @@ install_cli_wrapper() {
         fi
     fi
 
-    cat > clawforce-cli << 'EOF'
+    local tmpfile
+    tmpfile="$(mktemp)" || { warn "Could not create temp file. Skipping CLI wrapper."; return 1; }
+    cat > "$tmpfile" << 'EOF'
 #!/usr/bin/env bash
 # clawforce - Manage the Clawforce Docker container
 
@@ -481,8 +483,9 @@ case "$1" in
         ;;
 esac
 EOF
-    chmod +x clawforce-cli
-    $use_sudo mv clawforce-cli "$wrapper_path" 2>/dev/null || true
+    chmod +x "$tmpfile"
+    $use_sudo mv "$tmpfile" "$wrapper_path" 2>/dev/null || true
+    rm -f "$tmpfile" 2>/dev/null || true
     
     if command_exists clawforce; then
         success "CLI wrapper installed globally (run 'clawforce' to manage container)"
