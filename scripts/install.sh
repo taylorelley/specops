@@ -378,7 +378,10 @@ install_cli_wrapper() {
     info "Installing 'clawforce' CLI wrapper..."
     local wrapper_path="/usr/local/bin/clawforce"
     local use_sudo=""
-    
+
+    # Ensure we're in a valid directory (avoids "chdir: cannot access parent" when cwd is stale)
+    cd "${TMPDIR:-/tmp}" 2>/dev/null || cd /tmp 2>/dev/null || true
+
     if [ ! -w /usr/local/bin ]; then
         if command -v sudo >/dev/null 2>&1; then
             use_sudo="sudo"

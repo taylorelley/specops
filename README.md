@@ -81,21 +81,21 @@ Isolation at every layer:
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│  Dashboard                                                         │
-│  Agent Marketplace · 1-Click Deploy · Plan Boards · Workspace Explorer        │
-│  Live Activity Logs · Interactive Terminals · Organization Management         │
+│  Dashboard                                                                   │
+│  Agent Marketplace · 1-Click Deploy · Plan Boards · Workspace Explorer       │
+│  Live Activity Logs · Interactive Terminals · Organization Management        │
 └───────────────────────────────┬──────────────────────────────────────────────┘
                                 │ HTTP / WebSocket
 ┌───────────────────────────────┴──────────────────────────────────────────────┐
-│  Admin Control Plane                                                  │
-│  REST API · WebSocket Hub · Agent Runtimes · Vault Secrets · Plan Store        │
-│  Auth & RBAC · Workspace Service · Scheduler · Settings                       │
+│  Admin Control Plane                                                         │
+│  REST API · WebSocket Hub · Agent Runtimes · Vault Secrets · Plan Store      │
+│  Auth & RBAC · Workspace Service · Scheduler · Settings                      │
 └───────────────────────────────┬──────────────────────────────────────────────┘
                                 │ Isolated WebSocket (per-agent)
 ┌───────────────────────────────┴──────────────────────────────────────────────┐
-│  Agent Workers (isolated containers)                                          │
-│  LLM Core Loop · Shell & Filesystem · Web Access · MCP Tools · A2A Protocol   │
-│  Channel Adapters · Cron Scheduler · Skills · Plans · Spawning                │
+│  Agent Workers (isolated containers)                                         │
+│  LLM Core Loop · Shell & Filesystem · Web Access · MCP Tools · A2A Protocol  │
+│  Channel Adapters · Cron Scheduler · Skills · Plans · Spawning               │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
