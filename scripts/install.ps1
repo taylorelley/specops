@@ -399,7 +399,8 @@ Write-Success "Clawforce is running!"
 Write-Host ""
 Write-Host "  ┌─────────────────────────────────────────────────────────────────┐" -ForegroundColor Green
 Write-Host "  │                                                                 │" -ForegroundColor Green
-Write-Host "  │   Dashboard:    http://localhost:$Port                          │" -ForegroundColor Green
+$esc = [char]27
+Write-Host "  │   Dashboard:    $esc]8;;http://localhost:${Port}${esc}\http://localhost:${Port}${esc}]8;;${esc}\                          │" -ForegroundColor Green
 Write-Host "  │   Username:     $AdminUser                                       │" -ForegroundColor Green
 Write-Host "  │   Password:     $AdminPass                                       │" -ForegroundColor Green
 Write-Host "  │   Data:         $DataDir                                         │" -ForegroundColor Green
