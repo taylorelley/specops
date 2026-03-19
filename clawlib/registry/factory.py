@@ -4,6 +4,7 @@ from clawlib.mcpregistry.official_mcp import OfficialMCPRegistry
 from clawlib.registry.protocols import MCPRegistry, SkillRegistry, SoftwareRegistry
 from clawlib.skillregistry import SkillsShRegistry
 from clawlib.softwareregistry import YamlSoftwareRegistry
+from clawlib.storage import get_storage_backend, get_storage_root
 
 _skill_registry: SkillsShRegistry | None = None
 _mcp_registry: OfficialMCPRegistry | None = None
@@ -26,12 +27,10 @@ def get_mcp_registry() -> MCPRegistry:
     return _mcp_registry
 
 
-def get_software_registry() -> YamlSoftwareRegistry:
+def get_software_registry() -> SoftwareRegistry:
     """Return the SoftwareRegistry implementation (marketplace YAML catalog + custom entries)."""
     global _software_registry
     if _software_registry is None:
-        from clawlib.storage import get_storage_backend, get_storage_root
-
         storage = get_storage_backend()
         root = get_storage_root(storage)
         custom_path = root / "admin" / "custom_software_catalog.yaml"
