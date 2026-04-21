@@ -10,7 +10,7 @@ import os
 import re
 import shutil
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, field_validator
 
 from clawforce.auth import get_current_user
@@ -128,7 +128,7 @@ async def list_agent_skills(
 @router.get("/api/skills/search")
 async def search_skills(
     q: str = "",
-    limit: int = 20,
+    limit: int = Query(20, ge=1, le=100),
     _: dict = Depends(get_current_user),
     registry=Depends(get_skill_registry),
 ):

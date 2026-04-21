@@ -5,11 +5,15 @@ Covers:
 - Self-hosted catalog merging with the remote ``agentskill.sh`` search results.
 """
 
+import threading
 from pathlib import Path
 
 import pytest
 import yaml
 
+from clawbot.agent.agent_fs import AgentFS
+from clawbot.worker.handlers.schema import InstallSkillRequest
+from clawbot.worker.handlers.skill import handle_install_skill
 from clawlib.skillregistry import YamlSkillRegistry
 from clawlib.skillregistry.skills_sh import SkillsShRegistry
 
@@ -184,3 +188,133 @@ class TestYamlSkillRegistryCrud:
         reg = YamlSkillRegistry(custom_catalog_path=None)
         with pytest.raises(RuntimeError):
             reg.add_custom_entry({"slug": "x", "name": "X"})
+
+
+class TestWorkerHandlerSanitization:
+    """Regression tests for path-traversal hardening in the worker install handler."""
+
+    @pytest.mark.asyncio
+    async def test_install_rejects_traversal_via_at_slug(self, tmp_path: Path):
+        fs = AgentFS(tmp_path)
+        req = InstallSkillRequest(
+            slug="evil@../../outside",
+            skill_content="---\nname: x\ndescription: y\n---\n",
+        )
+        result = await handle_install_skill(fs, req)
+
+        # The install must have stayed inside .agents/skills/.
+        skills_root = (fs.workspace_path / ".agents" / "skills").resolve()
+        written = skills_root / result["data"]["slug"]
+        assert written.resolve().is_relative_to(skills_root)
+        # And must not have escaped to a sibling of the workspace.
+        assert not (tmp_path / "outside").exists()
+
+    @pytest.mark.asyncio
+    async def test_install_rejects_dotdot_name(self, tmp_path: Path):
+        fs = AgentFS(tmp_path)
+        # A bare ".." slug: _slug_to_skill_name returns "_._._" after replaces, but
+        # a slug ending in "@.." would yield "..". The sanitizer must neutralize it.
+        req = InstallSkillRequest(
+            slug="foo@..",
+            skill_content="---\nname: x\ndescription: y\n---\n",
+        )
+        result = await handle_install_skill(fs, req)
+        assert result["data"]["slug"] == "skill"
+        assert (fs.workspace_path / ".agents" / "skills" / "skill" / "SKILL.md").exists()
+
+
+class TestYamlSkillRegistryHardening:
+    """Regression tests for the defensive guards added during code review."""
+
+    def test_loader_filters_non_dict_entries(self, tmp_path: Path):
+        """Raw strings / ints in the catalog must be skipped, not crash callers."""
+        path = tmp_path / "custom_skills.yaml"
+        path.write_text(
+            yaml.dump(
+                [
+                    {"slug": "good", "name": "Good"},
+                    "oops-a-string",
+                    42,
+                    {"slug": "also-good", "name": "Also"},
+                ],
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
+        reg = YamlSkillRegistry(custom_catalog_path=path)
+        entries = reg.list_custom_entries()
+        assert [e["slug"] for e in entries] == ["good", "also-good"]
+        # get_entry must not blow up on the bad entries
+        assert reg.get_entry("good") is not None
+        assert reg.get_entry("missing") is None
+
+    @pytest.mark.asyncio
+    async def test_search_tolerates_non_dict_entries(self, tmp_path: Path):
+        """search_skills must not AttributeError when the catalog has junk entries."""
+        path = tmp_path / "custom_skills.yaml"
+        path.write_text(
+            yaml.dump([{"slug": "ok", "name": "OK"}, "junk"], sort_keys=False),
+            encoding="utf-8",
+        )
+        reg = YamlSkillRegistry(custom_catalog_path=path, inner=_StubSkillsShRegistry())
+        results = await reg.search_skills("", limit=10)
+        assert [r["slug"] for r in results] == ["ok"]
+
+    @pytest.mark.asyncio
+    async def test_install_rejects_unsafe_stored_slug(self, tmp_path: Path):
+        """A corrupt catalog entry with a path-traversal slug must not be installed."""
+        path = tmp_path / "custom_skills.yaml"
+        _write_yaml(
+            path,
+            [
+                {
+                    "slug": "../../etc",
+                    "name": "Evil",
+                    "skill_content": "---\nname: x\ndescription: y\n---\n",
+                }
+            ],
+        )
+        inner = _StubSkillsShRegistry()
+        reg = YamlSkillRegistry(custom_catalog_path=path, inner=inner)
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        rc, _, stderr = await reg.install_skill("../../etc", workspace)
+        assert rc == 1
+        assert "unsafe slug" in stderr
+        assert inner.install_calls == []
+        # And nothing was written outside the skills dir
+        assert not (tmp_path / "etc").exists()
+
+    @pytest.mark.asyncio
+    async def test_install_missing_content_returns_explicit_error(
+        self, tmp_path: Path, sample_custom_entry: dict
+    ):
+        """Catalog entry without skill_content should not silently fall back to npx."""
+        entry = {**sample_custom_entry, "skill_content": ""}
+        path = tmp_path / "custom_skills.yaml"
+        _write_yaml(path, [entry])
+        inner = _StubSkillsShRegistry()
+        reg = YamlSkillRegistry(custom_catalog_path=path, inner=inner)
+
+        rc, _, stderr = await reg.install_skill("my-pdf-helper", tmp_path)
+        assert rc == 1
+        assert "missing SKILL.md content" in stderr
+        assert inner.install_calls == []  # did NOT fall through to agentskill.sh
+
+    def test_mutators_are_thread_safe(self, tmp_path: Path):
+        """Concurrent adds should not lose entries thanks to the per-instance lock."""
+        path = tmp_path / "custom_skills.yaml"
+        reg = YamlSkillRegistry(custom_catalog_path=path)
+
+        def add(i: int) -> None:
+            reg.add_custom_entry({"slug": f"s{i}", "name": f"n{i}"})
+
+        threads = [threading.Thread(target=add, args=(i,)) for i in range(20)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        slugs = sorted(e["slug"] for e in reg.list_custom_entries())
+        assert slugs == sorted(f"s{i}" for i in range(20))

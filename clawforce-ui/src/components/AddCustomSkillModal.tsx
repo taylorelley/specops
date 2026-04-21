@@ -31,6 +31,35 @@ function toSlug(value: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
+/**
+ * Verify the content starts with a `---` frontmatter block, contains a closing
+ * `---` delimiter, and declares at least `name:` and `description:` inside it.
+ * Returns a human-readable error string, or "" when the content passes.
+ */
+function validateFrontmatter(content: string): string {
+  const lines = content.split(/\r?\n/);
+  if (lines[0]?.trim() !== "---") {
+    return "SKILL.md must begin with a '---' YAML frontmatter block.";
+  }
+  const closingIdx = lines.findIndex((line, i) => i > 0 && line.trim() === "---");
+  if (closingIdx === -1) {
+    return "SKILL.md frontmatter is missing its closing '---' delimiter.";
+  }
+  const body = lines.slice(1, closingIdx);
+  const keys = new Set<string>();
+  for (const line of body) {
+    const match = /^([A-Za-z0-9_-]+)\s*:/.exec(line);
+    if (match) keys.add(match[1].toLowerCase());
+  }
+  if (!keys.has("name")) {
+    return "SKILL.md frontmatter must include a 'name:' field.";
+  }
+  if (!keys.has("description")) {
+    return "SKILL.md frontmatter must include a 'description:' field.";
+  }
+  return "";
+}
+
 type FormState = {
   slug: string;
   name: string;
@@ -102,7 +131,9 @@ export default function AddCustomSkillModal({ open, onClose, entryToEdit }: AddC
     e.preventDefault();
     setError("");
     const slug = derivedSlug;
-    if (!form.name.trim()) {
+    const name = form.name.trim();
+    const description = form.description.trim();
+    if (!name) {
       setError("Name is required.");
       return;
     }
@@ -114,19 +145,21 @@ export default function AddCustomSkillModal({ open, onClose, entryToEdit }: AddC
       setError("Slug must be lowercase letters, digits, dashes or underscores.");
       return;
     }
-    if (!form.skillContent.trim()) {
+    const content = form.skillContent.trim();
+    if (!content) {
       setError("SKILL.md content is required.");
       return;
     }
-    if (!form.skillContent.trim().startsWith("---")) {
-      setError("SKILL.md must begin with a '---' YAML frontmatter block.");
+    const frontmatterError = validateFrontmatter(content);
+    if (frontmatterError) {
+      setError(frontmatterError);
       return;
     }
 
     const payload: AddCustomSkillPayload = {
       slug,
-      name: form.name.trim(),
-      description: form.description.trim(),
+      name,
+      description,
       author: form.author.trim(),
       version: form.version.trim(),
       categories: form.categories
@@ -139,7 +172,7 @@ export default function AddCustomSkillModal({ open, onClose, entryToEdit }: AddC
         .split(/\r?\n/)
         .map((s) => s.trim())
         .filter(Boolean),
-      skill_content: form.skillContent,
+      skill_content: content,
     };
 
     try {

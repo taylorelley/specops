@@ -1147,7 +1147,7 @@ function SkillDetailModal({
                 Repository
               </a>
             )}
-            {!skill.homepage && !skill.repository && (
+            {!skill.homepage && !skill.repository && skill.source !== "self-hosted" && (
               <a
                 href={`https://agentskill.sh/skills/${skill.slug}`}
                 target="_blank"

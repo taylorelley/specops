@@ -8,7 +8,9 @@ content directly into ``<workspace>/.agents/skills/<slug>/SKILL.md`` — bypassi
 
 import logging
 import os
+import re
 import tempfile
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -18,21 +20,44 @@ from clawlib.skillregistry.skills_sh import SkillsShRegistry
 
 logger = logging.getLogger(__name__)
 
+# Matches the API-level slug rule in clawforce/apis/skills.py (lowercase letters,
+# digits, dashes, underscores; no leading/trailing separator, no slashes, no dots).
+_SAFE_SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?$")
+
 
 def _load_yaml_list(path: Path) -> list[dict[str, Any]]:
-    """Load a YAML file expected to contain a list of dicts. Returns [] on any error."""
+    """Load a YAML file expected to contain a list of dicts.
+
+    Non-dict entries (e.g. raw strings or ints that slipped into the catalog)
+    are silently dropped so downstream ``entry.get(...)`` calls don't crash;
+    a warning is emitted listing the skipped items.
+    """
     if not path.exists():
         return []
     try:
         raw = path.read_text(encoding="utf-8")
         data = yaml.safe_load(raw)
-        if not isinstance(data, list):
-            logger.warning("Custom skills catalog at %s is not a list", path)
-            return []
-        return data
     except (yaml.YAMLError, OSError) as e:
         logger.warning("Failed to load custom skills catalog at %s: %s", path, e)
         return []
+    if not isinstance(data, list):
+        logger.warning("Custom skills catalog at %s is not a list", path)
+        return []
+    cleaned: list[dict[str, Any]] = []
+    skipped: list[Any] = []
+    for item in data:
+        if isinstance(item, dict):
+            cleaned.append(item)
+        else:
+            skipped.append(item)
+    if skipped:
+        logger.warning(
+            "Custom skills catalog at %s: skipped %d non-dict entries (e.g. %r)",
+            path,
+            len(skipped),
+            skipped[:3],
+        )
+    return cleaned
 
 
 def _atomic_write_yaml(path: Path, data: list[dict[str, Any]]) -> None:
@@ -110,6 +135,9 @@ class YamlSkillRegistry:
     ) -> None:
         self._custom_catalog_path = custom_catalog_path
         self._inner = inner or SkillsShRegistry()
+        # Serializes the read-modify-write sequence in the mutator methods so
+        # concurrent callers can't interleave load + mutate + atomic-write.
+        self._catalog_lock = threading.Lock()
 
     # -- Search ---------------------------------------------------------------
 
@@ -153,13 +181,53 @@ class YamlSkillRegistry:
         the inner :class:`SkillsShRegistry`.
         """
         entry = self.get_entry(slug)
-        if entry and entry.get("skill_content"):
-            try:
-                _write_skill_md(Path(dest), entry["slug"], entry["skill_content"])
-            except OSError as e:
-                return 1, "", f"Failed to write SKILL.md: {e}"
-            return 0, f"Installed self-hosted skill '{entry['slug']}'", ""
-        return await self._inner.install_skill(slug, dest, env)
+        if entry is None:
+            return await self._inner.install_skill(slug, dest, env)
+
+        # Defense in depth: the API validates slugs on write, but the YAML file
+        # is admin-editable, so re-check before touching the filesystem.
+        stored_slug = str(entry.get("slug") or "")
+        if not _SAFE_SLUG_RE.match(stored_slug):
+            return (
+                1,
+                "",
+                (
+                    f"Self-hosted catalog entry has unsafe slug {stored_slug!r}; "
+                    "refusing to install."
+                ),
+            )
+
+        content = entry.get("skill_content") or ""
+        if not content:
+            return (
+                1,
+                "",
+                (
+                    f"Self-hosted skill {stored_slug!r} is missing SKILL.md content "
+                    "in the catalog; edit the entry and add the skill body."
+                ),
+            )
+
+        dest_path = Path(dest)
+        skill_base = (dest_path / ".agents" / "skills").resolve()
+        target_dir = (skill_base / stored_slug).resolve()
+        try:
+            target_dir.relative_to(skill_base)
+        except ValueError:
+            return (
+                1,
+                "",
+                (
+                    f"Self-hosted skill {stored_slug!r} resolved outside the skills "
+                    "directory; refusing to install."
+                ),
+            )
+
+        try:
+            _write_skill_md(dest_path, stored_slug, content)
+        except OSError as e:
+            return 1, "", f"Failed to write SKILL.md: {e}"
+        return 0, f"Installed self-hosted skill '{stored_slug}'", ""
 
     # -- Custom CRUD ----------------------------------------------------------
 
@@ -180,29 +248,32 @@ class YamlSkillRegistry:
         """Append a new entry to the custom catalog YAML file."""
         if not self._custom_catalog_path:
             raise RuntimeError("No custom catalog path configured")
-        existing = _load_yaml_list(self._custom_catalog_path)
-        existing.append(entry)
-        _atomic_write_yaml(self._custom_catalog_path, existing)
+        with self._catalog_lock:
+            existing = _load_yaml_list(self._custom_catalog_path)
+            existing.append(entry)
+            _atomic_write_yaml(self._custom_catalog_path, existing)
 
     def update_custom_entry(self, slug: str, entry: dict[str, Any]) -> bool:
         """Update an existing custom entry by slug. Returns True if found and updated."""
         if not self._custom_catalog_path:
             return False
-        existing = _load_yaml_list(self._custom_catalog_path)
-        for i, e in enumerate(existing):
-            if e.get("slug") == slug:
-                existing[i] = {**e, **entry, "slug": slug}
-                _atomic_write_yaml(self._custom_catalog_path, existing)
-                return True
-        return False
+        with self._catalog_lock:
+            existing = _load_yaml_list(self._custom_catalog_path)
+            for i, e in enumerate(existing):
+                if e.get("slug") == slug:
+                    existing[i] = {**e, **entry, "slug": slug}
+                    _atomic_write_yaml(self._custom_catalog_path, existing)
+                    return True
+            return False
 
     def delete_custom_entry(self, slug: str) -> bool:
         """Remove a custom entry by slug. Returns True if it was found and removed."""
         if not self._custom_catalog_path:
             return False
-        existing = _load_yaml_list(self._custom_catalog_path)
-        filtered = [e for e in existing if e.get("slug") != slug]
-        if len(filtered) == len(existing):
-            return False
-        _atomic_write_yaml(self._custom_catalog_path, filtered)
-        return True
+        with self._catalog_lock:
+            existing = _load_yaml_list(self._custom_catalog_path)
+            filtered = [e for e in existing if e.get("slug") != slug]
+            if len(filtered) == len(existing):
+                return False
+            _atomic_write_yaml(self._custom_catalog_path, filtered)
+            return True
