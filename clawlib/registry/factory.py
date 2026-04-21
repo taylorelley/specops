@@ -1,7 +1,13 @@
-"""Factory for registry implementations. Returns configured SkillRegistry, MCPRegistry, and SoftwareRegistry."""
+"""Factory for registry implementations. Returns configured SkillRegistry, MCPRegistry, SoftwareRegistry, and PlanTemplateRegistry."""
 
 from clawlib.mcpregistry.official_mcp import OfficialMCPRegistry
-from clawlib.registry.protocols import MCPRegistry, SkillRegistry, SoftwareRegistry
+from clawlib.plantemplateregistry import YamlPlanTemplateRegistry
+from clawlib.registry.protocols import (
+    MCPRegistry,
+    PlanTemplateRegistry,
+    SkillRegistry,
+    SoftwareRegistry,
+)
 from clawlib.skillregistry import SkillsShRegistry
 from clawlib.softwareregistry import YamlSoftwareRegistry
 from clawlib.storage import get_storage_backend, get_storage_root
@@ -9,6 +15,7 @@ from clawlib.storage import get_storage_backend, get_storage_root
 _skill_registry: SkillsShRegistry | None = None
 _mcp_registry: OfficialMCPRegistry | None = None
 _software_registry: YamlSoftwareRegistry | None = None
+_plan_template_registry: YamlPlanTemplateRegistry | None = None
 
 
 def get_skill_registry() -> SkillRegistry:
@@ -36,3 +43,14 @@ def get_software_registry() -> SoftwareRegistry:
         custom_path = root / "admin" / "custom_software_catalog.yaml"
         _software_registry = YamlSoftwareRegistry(custom_catalog_path=custom_path)
     return _software_registry
+
+
+def get_plan_template_registry() -> PlanTemplateRegistry:
+    """Return the PlanTemplateRegistry implementation (marketplace YAML catalog + custom entries)."""
+    global _plan_template_registry
+    if _plan_template_registry is None:
+        storage = get_storage_backend()
+        root = get_storage_root(storage)
+        custom_path = root / "admin" / "custom_plan_templates.yaml"
+        _plan_template_registry = YamlPlanTemplateRegistry(custom_catalog_path=custom_path)
+    return _plan_template_registry

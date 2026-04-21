@@ -19,6 +19,7 @@ from clawforce.apis.config import router as config_router
 from clawforce.apis.control import router as control_router
 from clawforce.apis.logs import router as logs_router
 from clawforce.apis.mcp_registry import router as mcp_registry_router
+from clawforce.apis.plan_templates import router as plan_templates_router
 from clawforce.apis.plan_workspace import router as plan_workspace_router
 from clawforce.apis.plans import router as plans_router
 from clawforce.apis.providers import router as providers_router
@@ -81,6 +82,7 @@ def create_app() -> FastAPI:
     app.include_router(auth_router)
     app.include_router(agents_router)
     app.include_router(plans_router)
+    app.include_router(plan_templates_router)
     app.include_router(plan_workspace_router)
     app.include_router(skills_router)
     app.include_router(mcp_registry_router)

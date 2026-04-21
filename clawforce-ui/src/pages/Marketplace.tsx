@@ -1,12 +1,16 @@
 import { useState, useEffect } from "react";
-import { PageContainer, PageHeader } from "../components/ui";
-import { useTemplates, useSearchSkills, useSearchMcpServers, useSoftwareCatalog, useCustomSoftware, useAddCustomSoftware, useUpdateCustomSoftware, useDeleteCustomSoftware } from "../lib/queries";
+import { useNavigate } from "react-router-dom";
+import { PageContainer, PageHeader, PlanIcon, TrashIcon } from "../components/ui";
+import { useTemplates, useSearchSkills, useSearchMcpServers, useSoftwareCatalog, useCustomSoftware, useAddCustomSoftware, useUpdateCustomSoftware, useDeleteCustomSoftware, usePlanTemplates, useCustomPlanTemplates, useDeleteCustomPlanTemplate } from "../lib/queries";
 import CreateClawModal from "../components/CreateClawModal";
+import CreatePlanModal from "../components/CreatePlanModal";
 import TemplateDetailModal from "../components/TemplateDetailModal";
+import PlanTemplateDetailModal from "../components/PlanTemplateDetailModal";
+import AddPlanTemplateModal from "../components/AddPlanTemplateModal";
 import InstallSkillModal from "../components/InstallSkillModal";
 import InstallMcpModal from "../components/InstallMcpModal";
 import InstallSoftwareModal from "../components/InstallSoftwareModal";
-import type { MarketplaceSkill, MCPRegistryServer, SoftwareCatalogEntry, AddCustomSoftwarePayload } from "../lib/types";
+import type { MarketplaceSkill, MCPRegistryServer, SoftwareCatalogEntry, AddCustomSoftwarePayload, PlanTemplate } from "../lib/types";
 import {
   HiOutlineCommandLine,
   HiOutlineCodeBracket,
@@ -21,7 +25,7 @@ import {
   HiOutlineTrophy,
 } from "react-icons/hi2";
 
-type Tab = "templates" | "skills" | "mcp" | "software";
+type Tab = "templates" | "plan-templates" | "skills" | "mcp" | "software";
 
 const css = {
   input: "w-full rounded-lg border border-claude-border bg-white px-3 py-2 text-sm placeholder:text-claude-text-muted focus:border-claude-accent focus:outline-none focus:ring-1 focus:ring-claude-accent/30 transition-colors",
@@ -30,6 +34,7 @@ const css = {
 
 const TAB_FROM_HASH: Record<string, Tab> = {
   templates: "templates",
+  "plan-templates": "plan-templates",
   skills: "skills",
   mcp: "mcp",
   software: "software",
@@ -66,11 +71,14 @@ export default function Marketplace() {
 
   return (
     <PageContainer>
-      <PageHeader title="Marketplace" description="Browse templates, skills, MCP servers, and software" />
+      <PageHeader title="Marketplace" description="Browse claw templates, plan templates, skills, MCP servers, and software" />
 
       <div className="flex rounded-lg border border-claude-border bg-claude-surface p-0.5 w-fit mb-6">
         <button className={tabClass("templates")} onClick={() => setTab("templates")}>
           Claw Templates
+        </button>
+        <button className={tabClass("plan-templates")} onClick={() => setTab("plan-templates")}>
+          Plan Templates
         </button>
         <button className={tabClass("skills")} onClick={() => setTab("skills")}>
           Skills
@@ -87,12 +95,169 @@ export default function Marketplace() {
         <TemplatesTab templates={templates} isLoading={templatesLoading} />
       )}
 
+      {tab === "plan-templates" && <PlanTemplatesTab />}
+
       {tab === "skills" && <SkillsTab />}
 
       {tab === "mcp" && <McpTab />}
 
       {tab === "software" && <SoftwareTab />}
     </PageContainer>
+  );
+}
+
+function PlanTemplatesTab() {
+  const navigate = useNavigate();
+  const { data: templates = [], isLoading } = usePlanTemplates();
+  const { data: customEntries = [] } = useCustomPlanTemplates();
+  const deleteMutation = useDeleteCustomPlanTemplate();
+  const customIds = new Set(customEntries.map((e) => e.id));
+
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [editEntry, setEditEntry] = useState<PlanTemplate | null>(null);
+  const [createFromTemplate, setCreateFromTemplate] = useState<string | null>(null);
+
+  function handleDelete(entry: PlanTemplate) {
+    if (window.confirm(`Remove "${entry.name}" from plan templates?`)) {
+      deleteMutation.mutate(entry.id);
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-4">
+        <p className="text-sm text-claude-text-secondary">
+          Pre-built Kanban plans. Pick one when creating a plan to seed the board with columns and tasks.
+        </p>
+        <button
+          onClick={() => setShowAdd(true)}
+          className={`${css.btn} flex items-center gap-1.5 border border-claude-border bg-white hover:bg-claude-surface text-claude-text-primary text-xs shrink-0`}
+        >
+          <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+          </svg>
+          Add Custom
+        </button>
+      </div>
+
+      {isLoading && (
+        <div className="flex items-center justify-center py-12 text-sm text-claude-text-muted">
+          Loading plan templates…
+        </div>
+      )}
+
+      {!isLoading && templates.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          {templates.map((entry) => {
+            const isCustom = customIds.has(entry.id);
+            const taskCount = (entry.tasks ?? []).length;
+            const colCount = (entry.columns ?? []).length || 4;
+            return (
+              <div
+                key={entry.id}
+                className="rounded-xl border border-claude-border bg-white p-4 hover:border-claude-accent/30 transition-colors flex flex-col"
+              >
+                <button
+                  onClick={() => setDetailId(entry.id)}
+                  className="flex items-start gap-3 min-w-0 text-left"
+                >
+                  <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-sky-500/20 to-indigo-500/20 shrink-0">
+                    <PlanIcon className="h-5 w-5 text-sky-600" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-sm font-medium text-claude-text-primary truncate">{entry.name}</span>
+                      {isCustom && (
+                        <span className="rounded px-1.5 py-px text-[10px] font-medium bg-claude-surface text-claude-text-muted ring-1 ring-claude-border">
+                          Custom
+                        </span>
+                      )}
+                    </div>
+                    {entry.author && (
+                      <p className="text-[10px] text-claude-text-muted mt-0.5">by {entry.author}</p>
+                    )}
+                  </div>
+                </button>
+                <button onClick={() => setDetailId(entry.id)} className="text-left">
+                  {entry.description && (
+                    <p className="mt-2 text-xs text-claude-text-secondary line-clamp-2">{entry.description}</p>
+                  )}
+                </button>
+                <div className="mt-auto pt-3 flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-[10px] text-claude-text-muted">
+                    <span>{colCount} columns</span>
+                    <span>·</span>
+                    <span>{taskCount} tasks</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    {isCustom && (
+                      <>
+                        <button
+                          onClick={() => setEditEntry(entry)}
+                          className="rounded-md px-2 py-1 text-[11px] text-claude-text-secondary hover:text-claude-text-primary hover:bg-claude-surface transition-colors"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => handleDelete(entry)}
+                          className="rounded-md p-1 text-claude-border-strong hover:text-red-500 hover:bg-red-50 transition-all"
+                          title="Delete custom template"
+                        >
+                          <TrashIcon className="h-3.5 w-3.5" />
+                        </button>
+                      </>
+                    )}
+                    <button
+                      onClick={() => setCreateFromTemplate(entry.id)}
+                      className={`${css.btn} bg-claude-accent text-white hover:bg-claude-accent-hover text-xs px-3 py-1.5`}
+                    >
+                      Use template
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {!isLoading && templates.length === 0 && (
+        <div className="flex flex-col items-center justify-center py-12 text-claude-text-muted">
+          <PlanIcon className="h-8 w-8 mb-2" />
+          <p className="text-sm">No plan templates yet. Click "Add Custom" to create one.</p>
+        </div>
+      )}
+
+      <PlanTemplateDetailModal
+        open={!!detailId}
+        templateId={detailId}
+        onClose={() => setDetailId(null)}
+        onUseTemplate={(id) => {
+          setDetailId(null);
+          setCreateFromTemplate(id);
+        }}
+      />
+
+      <AddPlanTemplateModal
+        open={showAdd || !!editEntry}
+        onClose={() => {
+          setShowAdd(false);
+          setEditEntry(null);
+        }}
+        entryToEdit={editEntry}
+      />
+
+      <CreatePlanModal
+        open={!!createFromTemplate}
+        onClose={() => setCreateFromTemplate(null)}
+        initialTemplateId={createFromTemplate ?? undefined}
+        onPlanCreated={(planId) => {
+          setCreateFromTemplate(null);
+          navigate(`/plans/${planId}`);
+        }}
+      />
+    </div>
   );
 }
 

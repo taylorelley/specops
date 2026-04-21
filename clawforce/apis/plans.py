@@ -39,6 +39,7 @@ class PlanCreate(BaseModel):
 
     name: str
     description: str = ""
+    template_id: str | None = None
 
 
 class PlanUpdate(BaseModel):
@@ -245,7 +246,20 @@ def create_plan(
     caller: dict = Depends(get_user_or_agent),
     store: PlanStore = Depends(get_plan_store),
 ):
-    plan = store.create_plan(name=body.name, description=body.description)
+    if body.template_id:
+        from clawlib.registry import get_plan_template_registry
+
+        template = get_plan_template_registry().get_entry(body.template_id)
+        if not template:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Plan template '{body.template_id}' not found",
+            )
+        plan = store.create_plan_from_template(
+            name=body.name, description=body.description, template=template
+        )
+    else:
+        plan = store.create_plan(name=body.name, description=body.description)
     if caller.get("type") == "agent":
         store.assign_agent(plan.id, caller["agent_id"])
         plan.agent_ids = [caller["agent_id"]]

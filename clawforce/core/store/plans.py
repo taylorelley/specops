@@ -10,6 +10,7 @@ from clawforce.core.domain.plan import (
     PlanTask,
     TaskComment,
     _default_plan_columns,
+    columns_from_template,
 )
 from clawforce.core.store.base import BaseRepository
 
@@ -118,6 +119,87 @@ class PlanStore(BaseRepository[PlanDef]):
         plan.columns = _default_plan_columns(plan.id)
         plan.tasks = []
         plan.agent_ids = []
+        return plan
+
+    def create_plan_from_template(
+        self, name: str, description: str, template: dict
+    ) -> PlanDef:
+        """Create a plan using the columns and tasks from a plan template.
+
+        If the template declares ``columns``, those replace the four defaults.
+        Each task's ``column`` is resolved against the plan's actual columns
+        via ``_resolve_column_id`` (supports short names and title suffix match).
+        Tasks are inserted unassigned; users assign agents before activating.
+        """
+        plan = PlanDef(name=name, description=description)
+        d = plan.model_dump(by_alias=False)
+        d.pop("columns", None)
+        d.pop("tasks", None)
+        d.pop("agent_ids", None)
+        cols = list(d.keys())
+        placeholders = ", ".join("?" for _ in cols)
+
+        template_columns = template.get("columns") or []
+        resolved_columns = columns_from_template(plan.id, template_columns)
+
+        with self._db.connection() as conn:
+            conn.execute(
+                f"INSERT INTO plans ({', '.join(cols)}) VALUES ({placeholders})",
+                [d[k] for k in cols],
+            )
+            for col in resolved_columns:
+                conn.execute(
+                    "INSERT INTO plan_columns (id, plan_id, title, position) VALUES (?, ?, ?, ?)",
+                    (col.id, plan.id, col.title, col.position),
+                )
+
+        plan.columns = resolved_columns
+        plan.tasks = []
+        plan.agent_ids = []
+
+        template_tasks = template.get("tasks") or []
+        position_by_column: dict[str, int] = {}
+        for raw in template_tasks:
+            title = str(raw.get("title", "")).strip()
+            if not title:
+                continue
+            description_text = str(raw.get("description", ""))
+            column_ref = str(raw.get("column", "") or "")
+            column_id = self._resolve_column_id(plan, column_ref) if column_ref else (
+                plan.columns[0].id if plan.columns else f"{plan.id}-col-todo"
+            )
+            position = position_by_column.get(column_id, 0)
+            position_by_column[column_id] = position + 1
+            task = PlanTask(
+                title=title,
+                description=description_text,
+                column_id=column_id,
+                position=position,
+            )
+            with self._db.connection() as conn:
+                conn.execute(
+                    """INSERT INTO plan_tasks (id, plan_id, column_id, agent_id, title, description, position, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        task.id,
+                        plan.id,
+                        task.column_id or None,
+                        None,
+                        task.title,
+                        task.description,
+                        task.position,
+                        task.created_at,
+                        task.updated_at,
+                    ),
+                )
+            plan.tasks.append(task)
+
+        if template_tasks:
+            with self._db.connection() as conn:
+                conn.execute(
+                    "UPDATE plans SET updated_at = ? WHERE id = ?",
+                    (datetime.now(timezone.utc).isoformat(), plan.id),
+                )
         return plan
 
     def update_plan(self, plan_id: str, **kwargs: object) -> PlanDef | None:

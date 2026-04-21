@@ -50,3 +50,32 @@ class SoftwareRegistry(Protocol):
     def get_entry(self, software_id: str) -> dict[str, Any] | None:
         """Return a single catalog entry by id, or None if not found."""
         ...
+
+
+@runtime_checkable
+class PlanTemplateRegistry(Protocol):
+    """Protocol for plan template catalog list, lookup, and custom CRUD."""
+
+    def list_entries(self) -> list[dict[str, Any]]:
+        """Return all catalog entries (bundled + custom merged)."""
+        ...
+
+    def list_custom_entries(self) -> list[dict[str, Any]]:
+        """Return only the user-managed custom entries."""
+        ...
+
+    def get_entry(self, template_id: str) -> dict[str, Any] | None:
+        """Return a single catalog entry by id, or None if not found."""
+        ...
+
+    def add_custom_entry(self, entry: dict[str, Any]) -> None:
+        """Append a new entry to the custom catalog."""
+        ...
+
+    def update_custom_entry(self, template_id: str, entry: dict[str, Any]) -> bool:
+        """Update a custom entry by id. Returns True if found and updated."""
+        ...
+
+    def delete_custom_entry(self, template_id: str) -> bool:
+        """Remove a custom entry by id. Returns True if found and removed."""
+        ...

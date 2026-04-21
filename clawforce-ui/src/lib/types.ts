@@ -209,6 +209,38 @@ export type WorkspaceFiles = {
   files: string[];
 };
 
+export type PlanTemplateColumn = {
+  title: string;
+  position?: number | null;
+};
+
+export type PlanTemplateTask = {
+  title: string;
+  description?: string;
+  /** Short column name ("todo", "in-progress", ...) or a column title. Empty = first column. */
+  column?: string;
+};
+
+export type PlanTemplate = {
+  id: string;
+  name: string;
+  description?: string;
+  author?: string;
+  categories?: string[];
+  columns?: PlanTemplateColumn[];
+  tasks: PlanTemplateTask[];
+};
+
+export type AddPlanTemplatePayload = {
+  id: string;
+  name: string;
+  description?: string;
+  author?: string;
+  categories?: string[];
+  columns?: PlanTemplateColumn[];
+  tasks: PlanTemplateTask[];
+};
+
 export type PlanTask = {
   id: string;
   title: string;

@@ -14,6 +14,9 @@ export const queryKeys = {
   mcpServers: (q: string) => ["mcp", "search", q] as const,
   softwareCatalog: ["software", "catalog"] as const,
   customSoftware: ["software", "custom"] as const,
+  planTemplates: ["plan-templates"] as const,
+  customPlanTemplates: ["plan-templates", "custom"] as const,
+  planTemplate: (id: string) => ["plan-templates", id] as const,
   workspaceFiles: (id: string, root?: string) => ["agents", id, "workspace", root ?? "workspace"] as const,
   workspaceFile: (id: string, path: string) => ["agents", id, "workspace", path] as const,
   plans: ["plans"] as const,
@@ -304,6 +307,57 @@ export function useDeleteCustomSoftware() {
   });
 }
 
+export function usePlanTemplates() {
+  return useQuery({
+    queryKey: queryKeys.planTemplates,
+    queryFn: () => api.planTemplates.list(),
+    staleTime: 60_000,
+  });
+}
+
+export function useCustomPlanTemplates() {
+  return useQuery({
+    queryKey: queryKeys.customPlanTemplates,
+    queryFn: () => api.planTemplates.listCustom(),
+    staleTime: 30_000,
+  });
+}
+
+export function useAddCustomPlanTemplate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (entry: import("./types").AddPlanTemplatePayload) =>
+      api.planTemplates.add(entry),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.customPlanTemplates });
+      qc.invalidateQueries({ queryKey: queryKeys.planTemplates });
+    },
+  });
+}
+
+export function useUpdateCustomPlanTemplate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ templateId, entry }: { templateId: string; entry: import("./types").AddPlanTemplatePayload }) =>
+      api.planTemplates.update(templateId, entry),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.customPlanTemplates });
+      qc.invalidateQueries({ queryKey: queryKeys.planTemplates });
+    },
+  });
+}
+
+export function useDeleteCustomPlanTemplate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (templateId: string) => api.planTemplates.delete(templateId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.customPlanTemplates });
+      qc.invalidateQueries({ queryKey: queryKeys.planTemplates });
+    },
+  });
+}
+
 export function useInstallSoftware(agentId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -372,7 +426,8 @@ export function usePlan(planId: string | undefined) {
 export function useCreatePlan() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { name: string; description?: string }) => api.plans.create(data),
+    mutationFn: (data: { name: string; description?: string; template_id?: string }) =>
+      api.plans.create(data),
     onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.plans }),
   });
 }

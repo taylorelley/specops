@@ -1,0 +1,115 @@
+- id: product-launch
+  name: Product Launch
+  description: >-
+    Coordinate launch activities across engineering, marketing, and support.
+    Includes scope, collateral, demo, enablement, and launch-day tasks.
+  author: Clawforce
+  categories:
+    - product
+    - launch
+  tasks:
+    - title: Define launch scope and success metrics
+      description: Target date, audience, KPIs, and the "done" bar for launch.
+      column: todo
+    - title: Draft launch brief
+      description: Positioning, messaging, FAQs, and key talking points.
+      column: todo
+    - title: Build demo or prototype
+      description: Minimum viable demo for go-to-market teams.
+      column: todo
+    - title: Press and blog content
+      description: Blog post, press release, social copy, and launch video.
+      column: todo
+    - title: Internal enablement
+      description: Train sales and support; publish one-pager and FAQ.
+      column: todo
+
+- id: sprint-planning
+  name: Sprint Planning
+  description: >-
+    Standard two-week sprint scaffold: groom the backlog, plan the sprint,
+    work the plan, then run demo and retro.
+  author: Clawforce
+  categories:
+    - engineering
+  tasks:
+    - title: Groom backlog
+      description: Clarify stories, split oversized items, add acceptance criteria.
+      column: todo
+    - title: Set sprint goal
+      description: One-sentence outcome the team can rally around.
+      column: todo
+    - title: Estimate and commit
+      description: Size stories and commit to the scope for the sprint.
+      column: todo
+    - title: Run daily standups
+      description: Unblock, surface risks, track progress toward the sprint goal.
+      column: todo
+    - title: Sprint demo
+      description: Show completed work to stakeholders; collect feedback.
+      column: todo
+    - title: Sprint retrospective
+      description: What went well, what to change, one experiment for next sprint.
+      column: todo
+
+- id: bug-triage
+  name: Bug Triage
+  description: >-
+    Intake and prioritise a batch of bugs with a clear pipeline from report
+    through to verified fix.
+  author: Clawforce
+  categories:
+    - engineering
+    - quality
+  columns:
+    - title: Triage
+      position: 0
+    - title: Investigating
+      position: 1
+    - title: Fix in Progress
+      position: 2
+    - title: Verified
+      position: 3
+  tasks:
+    - title: Intake new reports
+      description: Pull fresh bug reports from support channels and issue tracker.
+      column: triage
+    - title: Reproduce top reports
+      description: Build a minimal repro for the highest-signal bugs.
+      column: triage
+    - title: Prioritise by impact
+      description: Sort by user impact, frequency, and severity.
+      column: triage
+
+- id: research-project
+  name: Research Project
+  description: >-
+    Structured research effort from open questions through publication.
+  author: Clawforce
+  categories:
+    - research
+  columns:
+    - title: Research
+      position: 0
+    - title: Synthesise
+      position: 1
+    - title: Draft
+      position: 2
+    - title: Publish
+      position: 3
+  tasks:
+    - title: Frame the research question
+      description: Write the question, audience, and desired outcome.
+      column: research
+    - title: Literature and prior art review
+      description: Survey existing work; capture gaps and open questions.
+      column: research
+    - title: Synthesise findings
+      description: Cluster insights; draft an outline.
+      column: synthesise
+    - title: Write first draft
+      description: Produce a full draft with figures and citations.
+      column: draft
+    - title: Publish and share
+      description: Final edit, publish, and socialise to stakeholders.
+      column: publish

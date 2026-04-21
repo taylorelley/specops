@@ -229,9 +229,30 @@ export const api = {
         { method: "DELETE" }
       ),
   },
+  planTemplates: {
+    list: () => request<import("./types").PlanTemplate[]>("/plan-templates"),
+    listCustom: () =>
+      request<import("./types").PlanTemplate[]>("/plan-templates/custom"),
+    get: (templateId: string) =>
+      request<import("./types").PlanTemplate>(
+        `/plan-templates/${encodeURIComponent(templateId)}`,
+      ),
+    add: (entry: import("./types").AddPlanTemplatePayload) =>
+      post<import("./types").PlanTemplate>("/plan-templates", entry),
+    update: (templateId: string, entry: import("./types").AddPlanTemplatePayload) =>
+      put<import("./types").PlanTemplate>(
+        `/plan-templates/${encodeURIComponent(templateId)}`,
+        entry,
+      ),
+    delete: (templateId: string) =>
+      request<{ ok: boolean; id: string }>(
+        `/plan-templates/${encodeURIComponent(templateId)}`,
+        { method: "DELETE" },
+      ),
+  },
   plans: {
     list: () => request<import("./types").Plan[]>("/plans"),
-    create: (data: { name: string; description?: string }) =>
+    create: (data: { name: string; description?: string; template_id?: string }) =>
       post<import("./types").Plan>("/plans", data),
     get: (id: string) => request<import("./types").Plan>(`/plans/${id}`),
     update: (id: string, data: Partial<import("./types").Plan>) => put<import("./types").Plan>(`/plans/${id}`, data),

@@ -55,6 +55,44 @@ def _default_plan_columns(plan_id: str | None = None) -> list[PlanColumn]:
     ]
 
 
+def _slugify_column_title(title: str) -> str:
+    """Lowercase, hyphenate, strip non-alphanumerics — matches the 'col-<short>' id convention."""
+    import re
+
+    slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+    return slug or "col"
+
+
+def columns_from_template(
+    plan_id: str, template_columns: list[dict] | None
+) -> list[PlanColumn]:
+    """Produce plan columns from a template definition.
+
+    If template_columns is empty or None, returns the four default columns.
+    Otherwise, each entry must have a ``title``; ``position`` is optional and
+    defaults to its index in the list. Column IDs follow the ``{plan_id}-col-{slug}``
+    convention so ``PlanStore._resolve_column_id`` keeps working for short-name
+    task references.
+    """
+    if not template_columns:
+        return _default_plan_columns(plan_id)
+    out: list[PlanColumn] = []
+    for idx, col in enumerate(template_columns):
+        title = str(col.get("title", "")).strip() or f"Column {idx + 1}"
+        position = col.get("position")
+        if position is None:
+            position = idx
+        slug = _slugify_column_title(title)
+        out.append(
+            PlanColumn(
+                id=f"{plan_id}-col-{slug}",
+                title=title,
+                position=int(position),
+            )
+        )
+    return out
+
+
 class PlanDef(Base):
     """A plan with Kanban columns and tasks. Agents assigned collaborate via shared workspace.
 
