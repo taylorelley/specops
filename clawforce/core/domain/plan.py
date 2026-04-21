@@ -1,5 +1,6 @@
 """Plan, task, and column data models."""
 
+import re
 import uuid
 from datetime import datetime, timezone
 
@@ -57,8 +58,6 @@ def _default_plan_columns(plan_id: str | None = None) -> list[PlanColumn]:
 
 def _slugify_column_title(title: str) -> str:
     """Lowercase, hyphenate, strip non-alphanumerics — matches the 'col-<short>' id convention."""
-    import re
-
     slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
     return slug or "col"
 
@@ -73,16 +72,27 @@ def columns_from_template(
     defaults to its index in the list. Column IDs follow the ``{plan_id}-col-{slug}``
     convention so ``PlanStore._resolve_column_id`` keeps working for short-name
     task references.
+
+    Duplicate or slug-equivalent titles (e.g., "Review" and "review") are
+    deduplicated with a numeric suffix (``-2``, ``-3``, …) so the resulting ids
+    stay unique inside ``plan_columns``.
     """
     if not template_columns:
         return _default_plan_columns(plan_id)
     out: list[PlanColumn] = []
+    used_slugs: set[str] = set()
     for idx, col in enumerate(template_columns):
         title = str(col.get("title", "")).strip() or f"Column {idx + 1}"
         position = col.get("position")
         if position is None:
             position = idx
-        slug = _slugify_column_title(title)
+        base_slug = _slugify_column_title(title)
+        slug = base_slug
+        suffix = 2
+        while slug in used_slugs:
+            slug = f"{base_slug}-{suffix}"
+            suffix += 1
+        used_slugs.add(slug)
         out.append(
             PlanColumn(
                 id=f"{plan_id}-col-{slug}",

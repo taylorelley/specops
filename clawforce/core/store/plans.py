@@ -136,6 +136,9 @@ class PlanStore(BaseRepository[PlanDef]):
           assigned to the plan (a task agent must be on the plan to work it).
         - Agent ids that do not exist are silently skipped — a stale template
           should not block plan creation.
+
+        All inserts happen inside a single transaction so a mid-flight failure
+        rolls back and leaves no half-built plan behind.
         """
         plan = PlanDef(name=name, description=description)
         d = plan.model_dump(by_alias=False)
@@ -147,6 +150,16 @@ class PlanStore(BaseRepository[PlanDef]):
 
         template_columns = template.get("columns") or []
         resolved_columns = columns_from_template(plan.id, template_columns)
+        template_tasks = template.get("tasks") or []
+
+        # Union of agents to consider preassigning: plan-level + any referenced by tasks.
+        plan_agent_candidates: list[str] = [
+            a for a in (template.get("agent_ids") or []) if isinstance(a, str) and a
+        ]
+        for raw in template_tasks:
+            task_agent = str(raw.get("agent_id", "") or "")
+            if task_agent and task_agent not in plan_agent_candidates:
+                plan_agent_candidates.append(task_agent)
 
         with self._db.connection() as conn:
             conn.execute(
@@ -159,45 +172,38 @@ class PlanStore(BaseRepository[PlanDef]):
                     (col.id, plan.id, col.title, col.position),
                 )
 
-        plan.columns = resolved_columns
-        plan.tasks = []
-        plan.agent_ids = []
+            plan.columns = resolved_columns
+            plan.tasks = []
+            plan.agent_ids = []
 
-        # Resolve the union of agents to preassign: plan-level + any referenced by tasks.
-        plan_agent_candidates: list[str] = [
-            a for a in (template.get("agent_ids") or []) if isinstance(a, str) and a
-        ]
-        template_tasks = template.get("tasks") or []
-        for raw in template_tasks:
-            task_agent = str(raw.get("agent_id", "") or "")
-            if task_agent and task_agent not in plan_agent_candidates:
-                plan_agent_candidates.append(task_agent)
-
-        assigned_agents = self._assign_existing_agents(plan.id, plan_agent_candidates)
-        plan.agent_ids = list(assigned_agents)
-
-        position_by_column: dict[str, int] = {}
-        for raw in template_tasks:
-            title = str(raw.get("title", "")).strip()
-            if not title:
-                continue
-            description_text = str(raw.get("description", ""))
-            column_ref = str(raw.get("column", "") or "")
-            column_id = self._resolve_column_id(plan, column_ref) if column_ref else (
-                plan.columns[0].id if plan.columns else f"{plan.id}-col-todo"
+            assigned_agents = self._assign_agents_in_conn(
+                conn, plan.id, plan_agent_candidates
             )
-            position = position_by_column.get(column_id, 0)
-            position_by_column[column_id] = position + 1
-            raw_task_agent = str(raw.get("agent_id", "") or "")
-            task_agent_id = raw_task_agent if raw_task_agent in assigned_agents else ""
-            task = PlanTask(
-                title=title,
-                description=description_text,
-                column_id=column_id,
-                agent_id=task_agent_id,
-                position=position,
-            )
-            with self._db.connection() as conn:
+            plan.agent_ids = list(assigned_agents)
+
+            position_by_column: dict[str, int] = {}
+            for raw in template_tasks:
+                title = str(raw.get("title", "")).strip()
+                if not title:
+                    continue
+                description_text = str(raw.get("description", ""))
+                column_ref = str(raw.get("column", "") or "")
+                column_id = (
+                    self._resolve_column_id(plan, column_ref)
+                    if column_ref
+                    else (plan.columns[0].id if plan.columns else f"{plan.id}-col-todo")
+                )
+                position = position_by_column.get(column_id, 0)
+                position_by_column[column_id] = position + 1
+                raw_task_agent = str(raw.get("agent_id", "") or "")
+                task_agent_id = raw_task_agent if raw_task_agent in assigned_agents else ""
+                task = PlanTask(
+                    title=title,
+                    description=description_text,
+                    column_id=column_id,
+                    agent_id=task_agent_id,
+                    position=position,
+                )
                 conn.execute(
                     """INSERT INTO plan_tasks (id, plan_id, column_id, agent_id, title, description, position, created_at, updated_at)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
@@ -213,22 +219,44 @@ class PlanStore(BaseRepository[PlanDef]):
                         task.updated_at,
                     ),
                 )
-            plan.tasks.append(task)
+                plan.tasks.append(task)
 
-        if template_tasks:
-            with self._db.connection() as conn:
+            if template_tasks:
                 conn.execute(
                     "UPDATE plans SET updated_at = ? WHERE id = ?",
                     (datetime.now(timezone.utc).isoformat(), plan.id),
                 )
         return plan
 
-    def _assign_existing_agents(self, plan_id: str, agent_ids: list[str]) -> set[str]:
-        """Assign only the agent ids that currently exist. Returns the set assigned.
+    def _assign_agents_in_conn(
+        self, conn, plan_id: str, agent_ids: list[str]
+    ) -> set[str]:
+        """Assign only the agent ids that currently exist, within an existing connection.
 
-        Silently drops ids that have no matching ``agents`` row to keep plan
-        creation resilient against stale template references.
+        Silently drops ids that have no matching ``agents`` row so stale template
+        references don't block plan creation.
         """
+        if not agent_ids:
+            return set()
+        placeholders = ",".join("?" for _ in agent_ids)
+        rows = conn.execute(
+            f"SELECT id FROM agents WHERE id IN ({placeholders})",
+            agent_ids,
+        ).fetchall()
+        existing = {r["id"] for r in rows}
+        for aid in agent_ids:
+            if aid in existing:
+                try:
+                    conn.execute(
+                        "INSERT INTO plan_agents (plan_id, agent_id) VALUES (?, ?)",
+                        (plan_id, aid),
+                    )
+                except sqlite3.IntegrityError:
+                    pass
+        return existing
+
+    def _assign_existing_agents(self, plan_id: str, agent_ids: list[str]) -> set[str]:
+        """Same as ``_assign_agents_in_conn`` but opens its own connection."""
         if not agent_ids:
             return set()
         with self._db.connection() as conn:

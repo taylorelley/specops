@@ -1,9 +1,10 @@
 """API endpoints for the plan templates marketplace (curated catalog + user-managed custom entries)."""
 
 import logging
+import re
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from clawforce.auth import get_current_user
 from clawlib.registry import get_plan_template_registry
@@ -11,6 +12,11 @@ from clawlib.registry import get_plan_template_registry
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["plan-templates"])
+
+# Slug rule: lowercase alphanumerics with internal single dashes, no leading/trailing dash.
+_TEMPLATE_ID_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$")
+# Reserved ids that would collide with sub-routes on /api/plan-templates/*.
+_RESERVED_TEMPLATE_IDS = frozenset({"custom"})
 
 
 class PlanTemplateColumnModel(BaseModel):
@@ -39,6 +45,20 @@ class AddPlanTemplateRequest(BaseModel):
         default_factory=list,
         description="Agents to preassign to plans created from this template",
     )
+
+    @field_validator("id")
+    @classmethod
+    def _validate_id(cls, v: str) -> str:
+        if not v:
+            raise ValueError("id must not be empty")
+        if v in _RESERVED_TEMPLATE_IDS:
+            raise ValueError(f"id '{v}' is reserved and cannot be used")
+        if not _TEMPLATE_ID_RE.match(v):
+            raise ValueError(
+                "id must be a slug: lowercase letters, digits and dashes only "
+                "(no leading/trailing dash, no slashes)"
+            )
+        return v
 
 
 @router.get("/api/plan-templates")

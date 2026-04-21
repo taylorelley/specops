@@ -253,6 +253,41 @@ class TestPlanTemplateEndpoints:
             == 401
         )
 
+    @pytest.mark.parametrize(
+        "bad_id",
+        [
+            "",  # empty
+            "custom",  # reserved — collides with /api/plan-templates/custom
+            "a/b",  # slashes
+            "Upper",  # uppercase
+            "-leading",  # leading dash
+            "trailing-",  # trailing dash
+            "has space",  # whitespace
+        ],
+    )
+    def test_rejects_invalid_ids(self, client: TestClient, auth_headers, bad_id):
+        resp = client.post(
+            "/api/plan-templates",
+            headers=auth_headers,
+            json={"id": bad_id, "name": "X", "tasks": [{"title": "t", "column": "todo"}]},
+        )
+        # Pydantic validation errors surface as 422.
+        assert resp.status_code == 422, resp.text
+
+    def test_accepts_valid_ids(self, client: TestClient, auth_headers):
+        for good_id in ["a", "a1", "my-plan", "bug-bash-2024"]:
+            resp = client.post(
+                "/api/plan-templates",
+                headers=auth_headers,
+                json={
+                    "id": good_id,
+                    "name": good_id,
+                    "tasks": [{"title": "t", "column": "todo"}],
+                },
+            )
+            assert resp.status_code == 201, resp.text
+            client.delete(f"/api/plan-templates/{good_id}", headers=auth_headers)
+
 
 class TestCreatePlanFromTemplate:
     def test_blank_plan_still_default_columns(self, client: TestClient, auth_headers):
@@ -291,9 +326,12 @@ class TestCreatePlanFromTemplate:
         assert [c["title"] for c in plan["columns"]] == [
             "Triage", "Investigating", "Fix in Progress", "Verified",
         ]
-        assert len(plan["tasks"]) == 3
-        triage_id = next(c["id"] for c in plan["columns"] if c["title"] == "Triage")
-        assert {t["column_id"] for t in plan["tasks"]} == {triage_id}
+        # Bundled template seeds at least one task in every column.
+        column_by_id = {c["id"]: c["title"] for c in plan["columns"]}
+        titles_with_tasks = {column_by_id[t["column_id"]] for t in plan["tasks"]}
+        assert titles_with_tasks == {
+            "Triage", "Investigating", "Fix in Progress", "Verified",
+        }
 
     def test_from_custom_template(self, client: TestClient, auth_headers):
         # Create a custom template, then create a plan from it.
@@ -338,7 +376,7 @@ class TestCreatePlanFromTemplate:
         self, client: TestClient, auth_headers
     ):
         """Tasks referencing a column that doesn't exist should land in the first column."""
-        client.post(
+        created = client.post(
             "/api/plan-templates",
             headers=auth_headers,
             json={
@@ -347,11 +385,13 @@ class TestCreatePlanFromTemplate:
                 "tasks": [{"title": "lost task", "column": "nowhere"}],
             },
         )
+        assert created.status_code == 201, created.text
         resp = client.post(
             "/api/plans",
             headers=auth_headers,
             json={"name": "Fallback plan", "template_id": "fallback"},
         )
+        assert resp.status_code == 200, resp.text
         plan = resp.json()
         first_col_id = plan["columns"][0]["id"]
         assert plan["tasks"][0]["column_id"] == first_col_id
@@ -360,7 +400,7 @@ class TestCreatePlanFromTemplate:
 class TestAgentPreassignment:
     def test_plan_level_agents_preassigned(self, client: TestClient, auth_headers):
         _seed_agents(["agent-1", "agent-2"])
-        client.post(
+        created = client.post(
             "/api/plan-templates",
             headers=auth_headers,
             json={
@@ -370,18 +410,19 @@ class TestAgentPreassignment:
                 "tasks": [{"title": "t", "column": "todo"}],
             },
         )
+        assert created.status_code == 201, created.text
         resp = client.post(
             "/api/plans",
             headers=auth_headers,
             json={"name": "New plan", "template_id": "with-agents"},
         )
-        assert resp.status_code == 200
+        assert resp.status_code == 200, resp.text
         plan = resp.json()
         assert sorted(plan["agent_ids"]) == ["agent-1", "agent-2"]
 
     def test_task_level_agent_is_applied(self, client: TestClient, auth_headers):
         _seed_agents(["agent-1"])
-        client.post(
+        created = client.post(
             "/api/plan-templates",
             headers=auth_headers,
             json={
@@ -393,11 +434,13 @@ class TestAgentPreassignment:
                 ],
             },
         )
+        assert created.status_code == 201, created.text
         resp = client.post(
             "/api/plans",
             headers=auth_headers,
             json={"name": "P", "template_id": "task-owner"},
         )
+        assert resp.status_code == 200, resp.text
         plan = resp.json()
         by_title = {t["title"]: t["agent_id"] for t in plan["tasks"]}
         assert by_title["owned"] == "agent-1"
@@ -409,7 +452,7 @@ class TestAgentPreassignment:
         self, client: TestClient, auth_headers
     ):
         _seed_agents(["real-agent"])
-        client.post(
+        created = client.post(
             "/api/plan-templates",
             headers=auth_headers,
             json={
@@ -419,12 +462,13 @@ class TestAgentPreassignment:
                 "tasks": [{"title": "t", "column": "todo"}],
             },
         )
+        assert created.status_code == 201, created.text
         resp = client.post(
             "/api/plans",
             headers=auth_headers,
             json={"name": "P", "template_id": "stale-plan-agents"},
         )
-        assert resp.status_code == 200
+        assert resp.status_code == 200, resp.text
         plan = resp.json()
         assert plan["agent_ids"] == ["real-agent"]
 
@@ -432,7 +476,7 @@ class TestAgentPreassignment:
         self, client: TestClient, auth_headers
     ):
         _seed_agents(["real-agent"])
-        client.post(
+        created = client.post(
             "/api/plan-templates",
             headers=auth_headers,
             json={
@@ -444,11 +488,13 @@ class TestAgentPreassignment:
                 ],
             },
         )
+        assert created.status_code == 201, created.text
         resp = client.post(
             "/api/plans",
             headers=auth_headers,
             json={"name": "P", "template_id": "stale-task-agent"},
         )
+        assert resp.status_code == 200, resp.text
         plan = resp.json()
         by_title = {t["title"]: t["agent_id"] for t in plan["tasks"]}
         assert by_title["lost owner"] == ""

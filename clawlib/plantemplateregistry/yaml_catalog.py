@@ -1,6 +1,8 @@
 """PlanTemplateRegistry implementation using marketplace YAML catalog."""
 
 import logging
+import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -28,11 +30,39 @@ def _load_yaml_list(path: Path) -> list[dict[str, Any]]:
         return []
 
 
+def _atomic_write_yaml(path: Path, data: list[dict[str, Any]]) -> None:
+    """Write YAML atomically: temp file in the same directory, fsync, then os.replace.
+
+    Avoids leaving a truncated catalog on crash.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    serialized = yaml.dump(data, allow_unicode=True, sort_keys=False)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(serialized)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp_name, path)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
+
 class YamlPlanTemplateRegistry:
-    """PlanTemplateRegistry implementation loading from marketplace YAML catalog.
+    """:class:`PlanTemplateRegistry` implementation loading from marketplace YAML catalogs.
 
     Merges the bundled catalog with an optional user-managed custom catalog.
-    Custom entries with the same id override bundled ones.
+    **Bundled entries win on id collisions**: :meth:`list_entries` appends a
+    custom entry only when its id is not already in the bundled catalog, so a
+    custom entry cannot shadow a bundled one — picking a colliding id via
+    :meth:`add_custom_entry` silently leaves the bundled entry in the merged
+    listing.
     """
 
     def __init__(
@@ -63,16 +93,12 @@ class YamlPlanTemplateRegistry:
         return _load_yaml_list(self._custom_catalog_path)
 
     def add_custom_entry(self, entry: dict[str, Any]) -> None:
-        """Append a new entry to the custom catalog YAML file."""
+        """Append a new entry to the custom catalog YAML file (atomic replace)."""
         if not self._custom_catalog_path:
             raise RuntimeError("No custom catalog path configured")
         existing = _load_yaml_list(self._custom_catalog_path)
         existing.append(entry)
-        self._custom_catalog_path.parent.mkdir(parents=True, exist_ok=True)
-        self._custom_catalog_path.write_text(
-            yaml.dump(existing, allow_unicode=True, sort_keys=False),
-            encoding="utf-8",
-        )
+        _atomic_write_yaml(self._custom_catalog_path, existing)
 
     def update_custom_entry(self, template_id: str, entry: dict[str, Any]) -> bool:
         """Update an existing custom entry by id. Returns True if it was found and updated."""
@@ -82,10 +108,7 @@ class YamlPlanTemplateRegistry:
         for i, e in enumerate(existing):
             if e.get("id") == template_id:
                 existing[i] = {**e, **entry, "id": template_id}
-                self._custom_catalog_path.write_text(
-                    yaml.dump(existing, allow_unicode=True, sort_keys=False),
-                    encoding="utf-8",
-                )
+                _atomic_write_yaml(self._custom_catalog_path, existing)
                 return True
         return False
 
@@ -97,10 +120,7 @@ class YamlPlanTemplateRegistry:
         filtered = [e for e in existing if e.get("id") != template_id]
         if len(filtered) == len(existing):
             return False
-        self._custom_catalog_path.write_text(
-            yaml.dump(filtered, allow_unicode=True, sort_keys=False),
-            encoding="utf-8",
-        )
+        _atomic_write_yaml(self._custom_catalog_path, filtered)
         return True
 
     def get_entry(self, template_id: str) -> dict[str, Any] | None:

@@ -80,6 +80,15 @@
     - title: Prioritise by impact
       description: Sort by user impact, frequency, and severity.
       column: triage
+    - title: Investigate and root-cause
+      description: Dig into the highest-priority bugs to identify the root cause.
+      column: investigating
+    - title: Begin fix implementation
+      description: Write and review fixes; track PRs.
+      column: fix-in-progress
+    - title: Verify and close
+      description: Confirm fixes in staging/production and close out reports.
+      column: verified
 
 - id: research-project
   name: Research Project

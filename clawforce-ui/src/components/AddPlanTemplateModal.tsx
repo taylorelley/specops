@@ -19,6 +19,24 @@ function toSlug(name: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
+/**
+ * Accept either a slug ("in-progress") or a human title ("In Progress") as input and
+ * return the slug that matches one of the available columns, or "" if no match.
+ * Makes the edit form tolerant of templates authored directly in YAML.
+ */
+function normalizeColumn(raw: string | undefined, availableTitles: string[]): string {
+  if (!raw) return "";
+  const slugs = availableTitles.map((t) => toSlug(t));
+  const lower = raw.toLowerCase();
+  // Already a matching slug
+  const slugHit = slugs.find((s) => s === lower);
+  if (slugHit) return slugHit;
+  // Match by title (case-insensitive)
+  const idx = availableTitles.findIndex((t) => t.toLowerCase() === lower);
+  if (idx >= 0) return slugs[idx];
+  return "";
+}
+
 function emptyTask(firstColumn: string): PlanTemplateTask {
   return { title: "", description: "", column: firstColumn, agent_id: "" };
 }
@@ -63,18 +81,21 @@ export default function AddPlanTemplateModal({ open, onClose, entryToEdit }: Add
   useEffect(() => {
     if (!open) return;
     if (entryToEdit) {
+      const editColumns = entryToEdit.columns ?? [];
+      const editAvailableTitles =
+        editColumns.length > 0 ? editColumns.map((c) => c.title) : DEFAULT_COLUMNS;
       setForm({
         name: entryToEdit.name ?? "",
         description: entryToEdit.description ?? "",
         author: entryToEdit.author ?? "",
         categories: (entryToEdit.categories ?? []).join(", "),
-        columns: entryToEdit.columns ?? [],
+        columns: editColumns,
         tasks:
           entryToEdit.tasks && entryToEdit.tasks.length > 0
             ? entryToEdit.tasks.map((t) => ({
                 title: t.title ?? "",
                 description: t.description ?? "",
-                column: t.column ?? "",
+                column: normalizeColumn(t.column, editAvailableTitles),
                 agent_id: t.agent_id ?? "",
               }))
             : [{ title: "", description: "", column: "todo", agent_id: "" }],

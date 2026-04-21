@@ -255,3 +255,13 @@ class TestColumnsFromTemplate:
         cols = columns_from_template("p", [{"title": ""}])
         assert cols[0].title.startswith("Column")
         assert cols[0].id.startswith("p-col-column")
+
+    def test_duplicate_slugs_are_deduped(self):
+        """Columns whose titles slugify to the same value get numeric suffixes so ids stay unique."""
+        cols = columns_from_template(
+            "p",
+            [{"title": "Review"}, {"title": "review"}, {"title": "Review!"}],
+        )
+        ids = [c.id for c in cols]
+        assert len(set(ids)) == len(ids)
+        assert ids == ["p-col-review", "p-col-review-2", "p-col-review-3"]

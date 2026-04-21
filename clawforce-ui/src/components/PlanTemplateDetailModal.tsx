@@ -38,9 +38,13 @@ function groupTasksByColumn(template: PlanTemplate): Array<{ title: string; task
   const groups: Record<string, PlanTemplateTask[]> = Object.fromEntries(
     columns.map((t) => [t, [] as PlanTemplateTask[]]),
   );
+  const fallback = columns[0];
   for (const task of template.tasks ?? []) {
-    const col = resolveColumnTitle(template, task.column);
-    if (!groups[col]) groups[col] = [];
+    let col = resolveColumnTitle(template, task.column);
+    // If the resolved title isn't one of the rendered columns (e.g. a task refers to a
+    // default short-name like "todo" on a template that redefined its columns), fall
+    // back to the first column so the task stays visible in the preview.
+    if (!(col in groups)) col = fallback;
     groups[col].push(task);
   }
   return columns.map((title) => ({ title, tasks: groups[title] ?? [] }));

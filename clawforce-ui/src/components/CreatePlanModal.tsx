@@ -37,6 +37,7 @@ export default function CreatePlanModal({ open, onClose, initialTemplateId, onPl
   const [description, setDescription] = useState("");
   const [templateId, setTemplateId] = useState<string>("");
   const [nameTouched, setNameTouched] = useState(false);
+  const [submitError, setSubmitError] = useState("");
   const createPlan = useCreatePlan();
   const { data: templates = [] } = usePlanTemplates();
 
@@ -52,6 +53,7 @@ export default function CreatePlanModal({ open, onClose, initialTemplateId, onPl
     setName("");
     setDescription("");
     setNameTouched(false);
+    setSubmitError("");
   }, [open, initialTemplateId]);
 
   const selectedTemplate = useMemo<PlanTemplate | null>(
@@ -68,6 +70,7 @@ export default function CreatePlanModal({ open, onClose, initialTemplateId, onPl
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    setSubmitError("");
     const trimmed = name.trim();
     if (!trimmed) return;
     const payload: { name: string; description?: string; template_id?: string } = {
@@ -75,9 +78,13 @@ export default function CreatePlanModal({ open, onClose, initialTemplateId, onPl
       description: description.trim(),
     };
     if (mode === "template" && templateId) payload.template_id = templateId;
-    const plan = await createPlan.mutateAsync(payload);
-    onClose();
-    if (onPlanCreated) onPlanCreated(plan.id);
+    try {
+      const plan = await createPlan.mutateAsync(payload);
+      onClose();
+      if (onPlanCreated) onPlanCreated(plan.id);
+    } catch (err: unknown) {
+      setSubmitError(err instanceof Error ? err.message : "Failed to create plan.");
+    }
   }
 
   const taskCount = selectedTemplate?.tasks?.length ?? 0;
@@ -86,6 +93,11 @@ export default function CreatePlanModal({ open, onClose, initialTemplateId, onPl
   return (
     <Modal open={open} onClose={onClose} title="Create Plan" icon={<PlanIcon className="h-4 w-4" />} size="lg">
       <form onSubmit={handleSubmit} className="space-y-4">
+        {submitError && (
+          <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+            {submitError}
+          </div>
+        )}
         <div className="flex rounded-lg border border-claude-border bg-claude-surface p-0.5">
           <button
             type="button"

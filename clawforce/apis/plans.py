@@ -30,6 +30,7 @@ from clawforce.deps import (
     get_runtime,
 )
 from clawlib.activity import ActivityEvent
+from clawlib.registry import get_plan_template_registry
 
 _PLAN_LOG_POLL_INTERVAL = 0.3  # seconds between DB polls for new plan activity events
 
@@ -247,8 +248,6 @@ def create_plan(
     store: PlanStore = Depends(get_plan_store),
 ):
     if body.template_id:
-        from clawlib.registry import get_plan_template_registry
-
         template = get_plan_template_registry().get_entry(body.template_id)
         if not template:
             raise HTTPException(
