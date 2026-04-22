@@ -1,6 +1,7 @@
 /** @type {import('tailwindcss').Config} */
 export default {
   content: ["./index.html", "./src/**/*.{js,ts,jsx,tsx}"],
+  darkMode: "class",
   theme: {
     extend: {
       fontFamily: {
@@ -9,23 +10,23 @@ export default {
       },
       colors: {
         claude: {
-          bg: "#FAF9F6",
-          surface: "#F0EDE6",
-          "surface-alt": "#E8E2D9",
-          hover: "#E3DDD4",
-          border: "#DDD7CE",
-          "border-strong": "#C5BEB5",
-          input: "#FFFFFF",
-          "text-primary": "#1A1A1A",
-          "text-secondary": "#3D3833",
-          "text-tertiary": "#6B6560",
-          "text-muted": "#9B958F",
-          accent: "#D97757",
-          "accent-hover": "#C4633F",
-          "accent-soft": "#FDF0EB",
-          sidebar: "#EDE8DB",
-          "sidebar-hover": "#E3DDD4",
-          "sidebar-active": "#DDD7CE",
+          bg: "rgb(var(--claude-bg) / <alpha-value>)",
+          surface: "rgb(var(--claude-surface) / <alpha-value>)",
+          "surface-alt": "rgb(var(--claude-surface-alt) / <alpha-value>)",
+          hover: "rgb(var(--claude-hover) / <alpha-value>)",
+          border: "rgb(var(--claude-border) / <alpha-value>)",
+          "border-strong": "rgb(var(--claude-border-strong) / <alpha-value>)",
+          input: "rgb(var(--claude-input) / <alpha-value>)",
+          "text-primary": "rgb(var(--claude-text-primary) / <alpha-value>)",
+          "text-secondary": "rgb(var(--claude-text-secondary) / <alpha-value>)",
+          "text-tertiary": "rgb(var(--claude-text-tertiary) / <alpha-value>)",
+          "text-muted": "rgb(var(--claude-text-muted) / <alpha-value>)",
+          accent: "rgb(var(--claude-accent) / <alpha-value>)",
+          "accent-hover": "rgb(var(--claude-accent-hover) / <alpha-value>)",
+          "accent-soft": "rgb(var(--claude-accent-soft) / <alpha-value>)",
+          sidebar: "rgb(var(--claude-sidebar) / <alpha-value>)",
+          "sidebar-hover": "rgb(var(--claude-sidebar-hover) / <alpha-value>)",
+          "sidebar-active": "rgb(var(--claude-sidebar-active) / <alpha-value>)",
         },
       },
     },

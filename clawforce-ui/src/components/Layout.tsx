@@ -1,12 +1,15 @@
 import { useState, useRef, useEffect } from "react";
 import { Outlet, NavLink, Link } from "react-router-dom";
+import { IoMoonOutline, IoSunnyOutline } from "react-icons/io5";
 import { useAuth } from "../contexts/AuthContext";
+import { useTheme } from "../contexts/ThemeContext";
 import { ClawIcon } from "./ClawIcon";
 import { PlanIcon, MarketplaceIcon } from "./ui";
 import clawforceLogo from "../assets/clawforce.png";
 
 export default function Layout() {
   const { user, logout } = useAuth();
+  const { theme, toggleTheme } = useTheme();
   const [open, setOpen] = useState(false);
   const popRef = useRef<HTMLDivElement>(null);
 
@@ -70,6 +73,18 @@ export default function Layout() {
                   </div>
                 </div>
               </div>
+              <button
+                type="button"
+                onClick={toggleTheme}
+                className="flex w-full items-center gap-2 px-3 py-2 text-xs text-claude-text-tertiary hover:bg-claude-sidebar-hover hover:text-claude-text-primary transition-colors"
+              >
+                {theme === "dark" ? (
+                  <IoSunnyOutline className="h-3.5 w-3.5" />
+                ) : (
+                  <IoMoonOutline className="h-3.5 w-3.5" />
+                )}
+                {theme === "dark" ? "Light mode" : "Dark mode"}
+              </button>
               <Link
                 to="/admin/settings"
                 onClick={() => setOpen(false)}
