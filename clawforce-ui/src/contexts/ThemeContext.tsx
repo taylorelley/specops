@@ -43,11 +43,21 @@ function getInitialTheme(): Theme {
   return "light";
 }
 
+const THEME_COLOR_LIGHT = "#FAF9F6";
+const THEME_COLOR_DARK = "#171614";
+
 function applyThemeClass(theme: Theme) {
   const root = document.documentElement;
   if (theme === "dark") root.classList.add("dark");
   else root.classList.remove("dark");
   root.style.colorScheme = theme;
+  let meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]:not([media])');
+  if (!meta) {
+    meta = document.createElement("meta");
+    meta.setAttribute("name", "theme-color");
+    document.head.appendChild(meta);
+  }
+  meta.setAttribute("content", theme === "dark" ? THEME_COLOR_DARK : THEME_COLOR_LIGHT);
 }
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {

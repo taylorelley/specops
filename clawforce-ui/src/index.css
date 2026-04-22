@@ -50,6 +50,11 @@
     cursor: pointer;
   }
 
+  select, option {
+    background-color: rgb(var(--claude-input));
+    color: rgb(var(--claude-text-primary));
+  }
+
   ::selection {
     background-color: rgb(var(--claude-accent) / 0.2);
   }
