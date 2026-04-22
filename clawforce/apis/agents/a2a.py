@@ -178,7 +178,8 @@ async def send_chat_message(
     user_id = current.get("id") or current.get("user_id") or current.get("sub")
     if not user_id:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Authenticated user is missing an identifier"
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authenticated user is missing an identifier",
         )
     session_key = f"webchat:{user_id}:{agent_id}"
 
@@ -201,9 +202,7 @@ async def send_chat_message(
     except Exception as e:
         logger.error(f"chat send failed for run_id={run_id}: {e}", exc_info=True)
         run_store.remove(run_id)
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY, detail="Agent delivery failed"
-        )
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Agent delivery failed")
 
     try:
         reply = await asyncio.wait_for(future, timeout=120.0)

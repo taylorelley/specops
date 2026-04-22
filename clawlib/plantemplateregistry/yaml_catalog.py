@@ -37,9 +37,7 @@ def _atomic_write_yaml(path: Path, data: list[dict[str, Any]]) -> None:
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     serialized = yaml.dump(data, allow_unicode=True, sort_keys=False)
-    fd, tmp_name = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
-    )
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent))
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(serialized)
