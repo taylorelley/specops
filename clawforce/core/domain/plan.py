@@ -62,9 +62,7 @@ def _slugify_column_title(title: str) -> str:
     return slug or "col"
 
 
-def columns_from_template(
-    plan_id: str, template_columns: list[dict] | None
-) -> list[PlanColumn]:
+def columns_from_template(plan_id: str, template_columns: list[dict] | None) -> list[PlanColumn]:
     """Produce plan columns from a template definition.
 
     If template_columns is empty or None, returns the four default columns.
@@ -120,6 +118,7 @@ class PlanDef(Base):
     """
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    owner_user_id: str = ""
     name: str = ""
     description: str = ""
     status: str = "draft"

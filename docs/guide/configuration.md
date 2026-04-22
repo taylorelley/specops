@@ -26,6 +26,7 @@ These are pre-set in the published Docker image for a minimal startup command:
 | `ADMIN_JWT_SECRET` | Secret key for signing JWT access tokens. **Required in production.** | Ephemeral (dev only) |
 | `CLAWFORCE_ENV` | Set to `production` to require `ADMIN_JWT_SECRET` and disable ephemeral JWT. | `development` |
 | `CORS_ORIGINS` | Comma-separated list of allowed CORS origins (no spaces). | `http://localhost:5173,http://localhost:8080` |
+| `CLAWFORCE_DISABLE_SSL_VERIFY` | Set to `1`/`true`/`yes`/`on` to disable TLS certificate verification for all outbound HTTPS calls and SMTP/IMAP TLS in clawforce, clawbot, and every agent container. Propagates automatically to Docker-spawned workers. **Insecure — only use for corporate MITM proxies or self-signed internal CAs; prefer `SSL_CERT_FILE` / `REQUESTS_CA_BUNDLE` for proper custom-CA setups.** | unset |
 
 ## Docker Pool
 

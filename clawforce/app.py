@@ -23,9 +23,11 @@ from clawforce.apis.plan_templates import router as plan_templates_router
 from clawforce.apis.plan_workspace import router as plan_workspace_router
 from clawforce.apis.plans import router as plans_router
 from clawforce.apis.providers import router as providers_router
+from clawforce.apis.shares import router as shares_router
 from clawforce.apis.skills import router as skills_router
 from clawforce.apis.software import router as software_router
 from clawforce.apis.terminal import router as terminal_router
+from clawforce.apis.users import router as users_router
 from clawforce.apis.webhooks import router as webhooks_router
 from clawforce.apis.workspace import router as workspace_router
 from clawforce.core.acp import RunStore
@@ -80,7 +82,9 @@ def create_app() -> FastAPI:
         allow_headers=["Authorization", "Content-Type"],
     )
     app.include_router(auth_router)
+    app.include_router(users_router)
     app.include_router(agents_router)
+    app.include_router(shares_router)
     app.include_router(plans_router)
     app.include_router(plan_templates_router)
     app.include_router(plan_workspace_router)

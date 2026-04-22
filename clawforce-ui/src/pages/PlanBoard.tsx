@@ -39,6 +39,7 @@ import Modal from "../components/Modal";
 import CreateTaskModal from "../components/CreateTaskModal";
 import EditTaskModal from "../components/EditTaskModal";
 import TaskDetailModal from "../components/TaskDetailModal";
+import SharesPanel from "../components/SharesPanel";
 
 marked.setOptions({ breaks: true, gfm: true });
 
@@ -1114,7 +1115,9 @@ export default function PlanBoard() {
   const { planId } = useParams<{ planId: string }>();
   const { data: plan, isLoading } = usePlan(planId);
   const { data: claws = [] } = useClaws();
+  const { user } = useAuth();
   const [agentsModalOpen, setAgentsModalOpen] = useState(false);
+  const [sharesModalOpen, setSharesModalOpen] = useState(false);
   const [createTaskColumn, setCreateTaskColumn] = useState<{ columnId: string; columnTitle: string } | null>(null);
   const [viewTask, setViewTask] = useState<PlanTaskType | null>(null);
   const [editTask, setEditTask] = useState<PlanTaskType | null>(null);
@@ -1265,6 +1268,16 @@ export default function PlanBoard() {
         icon={<PlanIcon className="h-5 w-5" />}
         action={
           <div className="flex items-center gap-2">
+            {(user?.role === "admin" ||
+              plan.effective_permission === "owner" ||
+              plan.effective_permission === "manager") && (
+              <Button
+                variant="secondary"
+                onClick={() => setSharesModalOpen(true)}
+              >
+                Share
+              </Button>
+            )}
             {plan.status === "draft" && (
               <>
                 {unassignedCount > 0 && (
@@ -1492,6 +1505,19 @@ export default function PlanBoard() {
         onAssign={(agentId) => assignAgent.mutate(agentId)}
         onRemove={(agentId) => removeAgent.mutate(agentId)}
       />
+
+      <Modal
+        open={sharesModalOpen}
+        onClose={() => setSharesModalOpen(false)}
+        title="Sharing"
+        size="lg"
+      >
+        <SharesPanel
+          resourceType="plan"
+          resourceId={plan.id}
+          ownerUserId={plan.owner_user_id}
+        />
+      </Modal>
 
     </PageContainer>
   );

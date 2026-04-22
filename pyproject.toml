@@ -95,6 +95,9 @@ ignore = [
 "clawbot/agent/tools/plan.py" = ["PLC0415"]
 # Tests: fixtures use in-function imports to respect monkeypatched env vars before import
 "tests/test_clawforce_api.py" = ["PLC0415"]
+"tests/test_clawforce_multiuser.py" = ["PLC0415"]
+"tests/test_clawforce_domain.py" = ["PLC0415"]
+"tests/test_plan_templates.py" = ["PLC0415"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

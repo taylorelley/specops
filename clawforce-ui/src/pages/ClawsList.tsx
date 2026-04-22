@@ -5,6 +5,7 @@ import { CHANNEL_DEFS } from "../components/agent-detail/constants";
 import { PageHeader, PageContainer, Badge, Button, ListCard, ListItem, PlayIcon, StopIcon, ChevronRightIcon } from "../components/ui";
 import { useClaws, useStartAgent, useStopAgent } from "../lib/queries";
 import CreateClawModal from "../components/CreateClawModal";
+import { useAuth } from "../contexts/AuthContext";
 
 const CHANNEL_LABEL_MAP: Record<string, string> = Object.fromEntries(
   CHANNEL_DEFS.map((c) => [c.key, c.label])
@@ -12,6 +13,7 @@ const CHANNEL_LABEL_MAP: Record<string, string> = Object.fromEntries(
 
 export default function ClawsList() {
   const { data: claws = [] } = useClaws();
+  const { user } = useAuth();
   const [modalOpen, setModalOpen] = useState(false);
   const startAgent = useStartAgent();
   const stopAgent = useStopAgent();
@@ -34,6 +36,11 @@ export default function ClawsList() {
         {claws.map((claw) => {
           const isRunning = claw.status === "running";
           const isTransitioning = claw.status === "provisioning" || claw.status === "connecting";
+          const canControl =
+            user?.role === "admin" ||
+            claw.effective_permission === "owner" ||
+            claw.effective_permission === "manager" ||
+            claw.effective_permission === "editor";
           return (
             <ListItem
               key={claw.id}
@@ -58,7 +65,7 @@ export default function ClawsList() {
                     </div>
                   )}
                   <div className="flex items-center gap-1.5">
-                {isRunning ? (
+                {canControl && isRunning ? (
                   <button
                     onClick={() => stopAgent.mutate(claw.id)}
                     disabled={stopAgent.isPending}
@@ -75,7 +82,7 @@ export default function ClawsList() {
                     </svg>
                     Starting
                   </span>
-                ) : (
+                ) : canControl ? (
                   <button
                     onClick={() => startAgent.mutate(claw.id)}
                     disabled={startAgent.isPending}
@@ -84,7 +91,7 @@ export default function ClawsList() {
                     <PlayIcon className="h-2.5 w-2.5" />
                     Start
                   </button>
-                )}
+                ) : null}
                     <Link
                       to={`/agents/${claw.id}`}
                       className="rounded p-1 text-claude-border-strong hover:text-claude-accent hover:bg-claude-surface transition-all"
@@ -112,6 +119,11 @@ export default function ClawsList() {
                     {claw.name}
                   </Link>
                   <Badge status={claw.status} />
+                  {claw.owner_user_id && user?.id && claw.owner_user_id !== user.id && (
+                    <span className="rounded px-1.5 py-px text-[10px] font-medium bg-claude-surface text-claude-text-muted ring-1 ring-claude-border">
+                      Shared
+                    </span>
+                  )}
                 </div>
               </div>
             </ListItem>

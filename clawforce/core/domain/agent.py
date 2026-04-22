@@ -3,8 +3,11 @@
 import os
 import uuid
 from datetime import datetime, timezone
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+UserRole = Literal["admin", "user"]
 
 
 class Base(BaseModel):
@@ -66,10 +69,15 @@ def control_plane_overrides(agent: AgentDef) -> dict:
 
 
 class UserDef(Base):
-    """Admin user (role extensible later)."""
+    """A Clawforce user account.
+
+    role is one of the values in UserRole:
+    - ``admin``: full access to every claw and plan, manages user accounts.
+    - ``user``: sees only claws and plans they own or have been explicitly shared with.
+    """
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     username: str = ""
     password_hash: str = ""
-    role: str = "admin"
+    role: UserRole = "admin"
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())

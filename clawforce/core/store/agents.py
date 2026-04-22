@@ -41,8 +41,23 @@ class AgentStore(BaseRepository[AgentDef]):
         d["onboarding_completed"] = bool(d.get("onboarding_completed", 0))
         return self.model_class.model_validate(d)
 
-    def list_agents(self) -> list[AgentDef]:
-        return self.list_all()
+    def list_agents(self, visible_to_user_id: str | None = None) -> list[AgentDef]:
+        """List agents. If ``visible_to_user_id`` is given, restrict to agents the
+        user owns or has a share on. Pass ``None`` to list every agent (admin).
+        """
+        if visible_to_user_id is None:
+            return self.list_all()
+        with self._db.connection() as conn:
+            rows = conn.execute(
+                """SELECT a.* FROM agents a
+                   WHERE a.owner_user_id = ?
+                      OR EXISTS (
+                          SELECT 1 FROM agent_shares s
+                          WHERE s.agent_id = a.id AND s.user_id = ?
+                      )""",
+                (visible_to_user_id, visible_to_user_id),
+            ).fetchall()
+            return [self._row_to_model(r) for r in rows]
 
     def get_agent(self, agent_id: str) -> AgentDef | None:
         return self.get_by_id(agent_id)

@@ -265,9 +265,7 @@ class TestCustomMCPRequestValidation:
         ],
     )
     def test_http_url_accepted(self, url: str):
-        req = CustomMCPRequest.model_validate(
-            self._base(install_config={"url": url})
-        )
+        req = CustomMCPRequest.model_validate(self._base(install_config={"url": url}))
         assert req.install_config == {"url": url}
 
     @pytest.mark.parametrize(
@@ -282,9 +280,7 @@ class TestCustomMCPRequestValidation:
     )
     def test_bad_url_rejected(self, url: str):
         with pytest.raises(ValidationError):
-            CustomMCPRequest.model_validate(
-                self._base(install_config={"url": url})
-            )
+            CustomMCPRequest.model_validate(self._base(install_config={"url": url}))
 
     def test_install_config_must_be_one_of(self):
         with pytest.raises(ValidationError):

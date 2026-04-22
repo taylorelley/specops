@@ -12,6 +12,7 @@ from typing import Any
 import httpx
 
 from clawbot.agent.tools.base import Tool
+from clawlib.http import httpx_verify
 
 
 def _extract_pdf_text(data: bytes) -> tuple[str | None, str | None]:
@@ -69,7 +70,7 @@ class _PlanToolBase(Tool):
         last_err = ""
         for attempt in range(_retries + 1):
             try:
-                async with httpx.AsyncClient(timeout=30.0) as client:
+                async with httpx.AsyncClient(timeout=30.0, verify=httpx_verify()) as client:
                     req_kwargs: dict[str, Any] = {}
                     if payload is not None:
                         req_kwargs["json"] = payload
@@ -973,7 +974,7 @@ class GetPlanArtifactTool(_PlanToolBase):
         url = f"{self._base}/plans/{plan_id}/artifacts/{artifact_id}/download"
         headers = {"Authorization": f"Bearer {self._token}"}
         try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
+            async with httpx.AsyncClient(timeout=60.0, verify=httpx_verify()) as client:
                 r = await client.get(url, headers=headers)
                 r.raise_for_status()
                 return r.content

@@ -85,9 +85,7 @@ async def get_plan_template(
     """Return a single plan template by id."""
     entry = get_plan_template_registry().get_entry(template_id)
     if not entry:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Plan template not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan template not found")
     return entry
 
 

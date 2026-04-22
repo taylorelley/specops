@@ -5,16 +5,23 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from clawforce.auth import get_current_user
-from clawforce.core.authz import can_access_agent, require_agent_access
+from clawforce.core.authz import (
+    effective_agent_permission,
+    require_agent_owner,
+    require_agent_read,
+    require_agent_write,
+)
 from clawforce.core.domain.runtime import AgentRuntimeBackend, AgentRuntimeError
 from clawforce.core.store.agent_config import AgentConfigStore
 from clawforce.core.store.agent_variables import AgentVariablesStore, default_git_variables
 from clawforce.core.store.agents import AgentStore
+from clawforce.core.store.shares import ShareStore
 from clawforce.deps import (
     get_agent_config_store,
     get_agent_store,
     get_agent_variables_store,
     get_runtime,
+    get_share_store,
 )
 from clawlib.config.helpers import redact, strip_redacted, validate_channels
 from clawlib.config.schema import ChannelsConfig
@@ -98,12 +105,13 @@ async def list_all_agents(
     current: dict = Depends(get_current_user),
     store: AgentStore = Depends(get_agent_store),
     agent_config_store: AgentConfigStore = Depends(get_agent_config_store),
+    share_store: ShareStore = Depends(get_share_store),
     runtime: AgentRuntimeBackend = Depends(get_runtime),
 ):
-    agents = store.list_agents()
-    accessible = [a for a in agents if can_access_agent(current, a)]
+    visible_to = None if current.get("role") == "admin" else current.get("id")
+    agents = store.list_agents(visible_to_user_id=visible_to)
     result = []
-    for a in accessible:
+    for a in agents:
         runtime_status = await runtime.get_status(a.id)
         agent_dict = redact(a.model_dump())
         agent_dict["status"] = runtime_status.status
@@ -114,6 +122,7 @@ async def list_all_agents(
         agent_dict["channels_enabled"] = [
             ch for ch, cfg in channels.items() if isinstance(cfg, dict) and cfg.get("enabled")
         ]
+        agent_dict["effective_permission"] = effective_agent_permission(current, a, share_store)
         result.append(agent_dict)
     return result
 
@@ -144,12 +153,13 @@ async def get_agent(
     current: dict = Depends(get_current_user),
     store: AgentStore = Depends(get_agent_store),
     agent_config_store: AgentConfigStore = Depends(get_agent_config_store),
+    share_store: ShareStore = Depends(get_share_store),
     runtime: AgentRuntimeBackend = Depends(get_runtime),
 ):
     a = store.get_agent(agent_id)
     if not a:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-    require_agent_access(current, a)
+    perm = require_agent_read(current, a, share_store)
     runtime_status = await runtime.get_status(agent_id)
     try:
         config_dict = await runtime.get_config(agent_id)
@@ -167,6 +177,7 @@ async def get_agent(
                 config_dict = {**config_dict, section: store_config[section]}
     resp = _agent_response(a, config_dict)
     resp["status"] = runtime_status.status
+    resp["effective_permission"] = perm
     if runtime_status.message:
         resp["status_message"] = runtime_status.message
     if runtime_status.mcp:
@@ -185,17 +196,21 @@ async def update_agent(
     current: dict = Depends(get_current_user),
     store: AgentStore = Depends(get_agent_store),
     agent_config_store: AgentConfigStore = Depends(get_agent_config_store),
+    share_store: ShareStore = Depends(get_share_store),
     runtime: AgentRuntimeBackend = Depends(get_runtime),
 ):
+    existing = store.get_agent(agent_id)
+    if not existing:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+    require_agent_write(current, existing, share_store)
     store_only = {
         k: v
         for k, v in body.model_dump(exclude_unset=True).items()
         if k in ("name", "description", "enabled", "color", "mode", "onboarding_completed")
     }
-    a = store.update_agent(agent_id, **store_only) if store_only else store.get_agent(agent_id)
+    a = store.update_agent(agent_id, **store_only) if store_only else existing
     if not a:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-    require_agent_access(current, a)
 
     overrides = _build_update_overrides(
         model=body.model,
@@ -244,11 +259,12 @@ def delete_agent(
     agent_id: str,
     current: dict = Depends(get_current_user),
     store: AgentStore = Depends(get_agent_store),
+    share_store: ShareStore = Depends(get_share_store),
 ):
     a = store.get_agent(agent_id)
     if not a:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-    require_agent_access(current, a)
+    require_agent_owner(current, a, share_store)
     if not store.delete_agent(agent_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
     return {"ok": True}
@@ -259,12 +275,13 @@ async def start_agent(
     agent_id: str,
     current: dict = Depends(get_current_user),
     store: AgentStore = Depends(get_agent_store),
+    share_store: ShareStore = Depends(get_share_store),
     runtime: AgentRuntimeBackend = Depends(get_runtime),
 ):
     a = store.get_agent(agent_id)
     if not a:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-    require_agent_access(current, a)
+    require_agent_write(current, a, share_store)
     try:
         await runtime.start_agent(agent_id)
     except AgentRuntimeError as exc:
@@ -283,12 +300,13 @@ async def stop_agent(
     agent_id: str,
     current: dict = Depends(get_current_user),
     store: AgentStore = Depends(get_agent_store),
+    share_store: ShareStore = Depends(get_share_store),
     runtime: AgentRuntimeBackend = Depends(get_runtime),
 ):
     a = store.get_agent(agent_id)
     if not a:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-    require_agent_access(current, a)
+    require_agent_write(current, a, share_store)
     try:
         await runtime.stop_agent(agent_id)
     except AgentRuntimeError as exc:
@@ -302,11 +320,12 @@ async def agent_status(
     agent_id: str,
     current: dict = Depends(get_current_user),
     store: AgentStore = Depends(get_agent_store),
+    share_store: ShareStore = Depends(get_share_store),
     runtime: AgentRuntimeBackend = Depends(get_runtime),
 ):
     a = store.get_agent(agent_id)
     if not a:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-    require_agent_access(current, a)
+    require_agent_read(current, a, share_store)
     runtime_status = await runtime.get_status(agent_id)
     return {"agent_id": runtime_status.agent_id, "status": runtime_status.status}

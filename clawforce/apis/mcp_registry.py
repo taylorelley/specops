@@ -8,13 +8,20 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, field_validator
 
-from clawforce.apis.agents.crud import require_agent_access
 from clawforce.auth import get_current_user
+from clawforce.core.authz import require_agent_read, require_agent_write
 from clawforce.core.domain.runtime import AgentRuntimeBackend
 from clawforce.core.runtimes._worker_runtime import WorkerRuntimeBase
 from clawforce.core.store.agent_config import AgentConfigStore
 from clawforce.core.store.agents import AgentStore
-from clawforce.deps import get_agent_config_store, get_agent_store, get_mcp_registry, get_runtime
+from clawforce.core.store.shares import ShareStore
+from clawforce.deps import (
+    get_agent_config_store,
+    get_agent_store,
+    get_mcp_registry,
+    get_runtime,
+    get_share_store,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -227,6 +234,7 @@ async def list_mcp_servers(
     agent_id: str,
     current: dict = Depends(get_current_user),
     store: AgentStore = Depends(get_agent_store),
+    share_store: ShareStore = Depends(get_share_store),
     runtime: AgentRuntimeBackend = Depends(get_runtime),
 ):
     """Get list of installed MCP servers and their connection status for an agent.
@@ -236,7 +244,7 @@ async def list_mcp_servers(
     agent = store.get_agent(agent_id)
     if not agent:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-    require_agent_access(current, agent)
+    require_agent_read(current, agent, share_store)
 
     runtime_status = await runtime.get_status(agent_id)
     mcp_servers = runtime_status.mcp or {}
@@ -254,6 +262,7 @@ async def list_mcp_server_tools(
     server_key: str,
     current: dict = Depends(get_current_user),
     store: AgentStore = Depends(get_agent_store),
+    share_store: ShareStore = Depends(get_share_store),
     runtime: AgentRuntimeBackend = Depends(get_runtime),
 ):
     """Get list of tools provided by a specific MCP server.
@@ -264,7 +273,7 @@ async def list_mcp_server_tools(
     agent = store.get_agent(agent_id)
     if not agent:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-    require_agent_access(current, agent)
+    require_agent_read(current, agent, share_store)
 
     runtime_status = await runtime.get_status(agent_id)
     if runtime_status.status != "running":
@@ -317,8 +326,9 @@ async def list_mcp_server_tools(
 async def install_mcp_server(
     agent_id: str,
     body: MCPInstallRequest,
-    _: dict = Depends(get_current_user),
+    current: dict = Depends(get_current_user),
     store: AgentStore = Depends(get_agent_store),
+    share_store: ShareStore = Depends(get_share_store),
     agent_config_store: AgentConfigStore = Depends(get_agent_config_store),
     runtime: AgentRuntimeBackend = Depends(get_runtime),
 ):
@@ -329,6 +339,7 @@ async def install_mcp_server(
     agent = store.get_agent(agent_id)
     if not agent:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+    require_agent_write(current, agent, share_store)
 
     runtime_status = await runtime.get_status(agent_id)
     if runtime_status.status != "running":

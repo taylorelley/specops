@@ -19,6 +19,7 @@ from loguru import logger
 from clawlib.bus import MessageBus, OutboundMessage
 from clawlib.channels.base import BaseChannel
 from clawlib.config.schema import EmailConfig
+from clawlib.http import insecure_ssl_context, ssl_verify_disabled
 
 
 class EmailChannel(BaseChannel):
@@ -169,11 +170,15 @@ class EmailChannel(BaseChannel):
 
     def _smtp_send(self, msg: EmailMessage) -> None:
         timeout = 30
+        tls_context = (
+            insecure_ssl_context() if ssl_verify_disabled() else ssl.create_default_context()
+        )
         if self.config.smtp_use_ssl:
             with smtplib.SMTP_SSL(
                 self.config.smtp_host,
                 self.config.smtp_port,
                 timeout=timeout,
+                context=tls_context,
             ) as smtp:
                 smtp.login(self.config.smtp_username, self.config.smtp_password)
                 smtp.send_message(msg)
@@ -181,7 +186,7 @@ class EmailChannel(BaseChannel):
 
         with smtplib.SMTP(self.config.smtp_host, self.config.smtp_port, timeout=timeout) as smtp:
             if self.config.smtp_use_tls:
-                smtp.starttls(context=ssl.create_default_context())
+                smtp.starttls(context=tls_context)
             smtp.login(self.config.smtp_username, self.config.smtp_password)
             smtp.send_message(msg)
 
@@ -232,7 +237,12 @@ class EmailChannel(BaseChannel):
         mailbox = self.config.imap_mailbox or "INBOX"
 
         if self.config.imap_use_ssl:
-            client = imaplib.IMAP4_SSL(self.config.imap_host, self.config.imap_port)
+            imap_ssl_context = insecure_ssl_context() if ssl_verify_disabled() else None
+            client = imaplib.IMAP4_SSL(
+                self.config.imap_host,
+                self.config.imap_port,
+                ssl_context=imap_ssl_context,
+            )
         else:
             client = imaplib.IMAP4(self.config.imap_host, self.config.imap_port)
 

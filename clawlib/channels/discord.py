@@ -12,6 +12,7 @@ from loguru import logger
 from clawlib.bus import MessageBus, OutboundMessage
 from clawlib.channels.base import BaseChannel
 from clawlib.config.schema import DiscordConfig
+from clawlib.http import httpx_verify
 
 DISCORD_API_BASE = "https://discord.com/api/v10"
 MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024  # 20MB
@@ -38,7 +39,7 @@ class DiscordChannel(BaseChannel):
             return
 
         self._running = True
-        self._http = httpx.AsyncClient(timeout=30.0)
+        self._http = httpx.AsyncClient(timeout=30.0, verify=httpx_verify())
 
         while self._running:
             try:

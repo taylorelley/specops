@@ -4,6 +4,14 @@ from clawforce.core.database import Database
 from clawforce.core.domain.agent import UserDef
 from clawforce.core.store.base import BaseRepository
 
+VALID_ROLES = frozenset({"admin", "user"})
+
+
+def _validate_role(role: str) -> str:
+    if role not in VALID_ROLES:
+        raise ValueError(f"Invalid role '{role}'. Expected one of: {sorted(VALID_ROLES)}")
+    return role
+
 
 class UserStore(BaseRepository[UserDef]):
     """CRUD for users persisted in SQLite."""
@@ -26,9 +34,10 @@ class UserStore(BaseRepository[UserDef]):
             return self._row_to_model(row) if row else None
 
     def create_user(self, username: str, password_hash: str, role: str = "admin") -> UserDef:
+        _validate_role(role)
         if self.get_user_by_username(username) is not None:
             raise ValueError(f"User already exists: {username}")
-        user = UserDef(username=username, password_hash=password_hash, role=role)
+        user = UserDef(username=username, password_hash=password_hash, role=role)  # type: ignore[arg-type]
         self._insert_row(user.model_dump(by_alias=False))
         return user
 
@@ -45,11 +54,17 @@ class UserStore(BaseRepository[UserDef]):
         if password_hash is not None:
             kwargs["password_hash"] = password_hash
         if role is not None:
+            _validate_role(role)
             kwargs["role"] = role
         if kwargs:
             self._update(user_id, **kwargs)
             if "password_hash" in kwargs:
                 user.password_hash = kwargs["password_hash"]
             if "role" in kwargs:
-                user.role = kwargs["role"]
+                user.role = kwargs["role"]  # type: ignore[assignment]
         return user
+
+    def count_admins(self) -> int:
+        with self._db.connection() as conn:
+            row = conn.execute("SELECT COUNT(*) AS n FROM users WHERE role = 'admin'").fetchone()
+            return int(row["n"] if row else 0)

@@ -76,13 +76,21 @@ class TestUserDef:
     def test_custom_values(self):
         """UserDef should accept custom values."""
         user = UserDef(
-            username="admin",
+            username="alice",
             password_hash="hashed_password",
-            role="super_admin",
+            role="user",
         )
-        assert user.username == "admin"
+        assert user.username == "alice"
         assert user.password_hash == "hashed_password"
-        assert user.role == "super_admin"
+        assert user.role == "user"
+
+    def test_invalid_role_rejected(self):
+        """UserDef should reject roles outside admin/user."""
+        import pytest
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            UserDef(username="bob", password_hash="x", role="super_admin")
 
 
 class TestPlanColumn:
@@ -214,10 +222,16 @@ class TestColumnsFromTemplate:
         """Empty or None template columns should fall back to default four."""
         plan_id = "plan-x"
         assert [c.title for c in columns_from_template(plan_id, None)] == [
-            "Todo", "In Progress", "Blocked", "Done",
+            "Todo",
+            "In Progress",
+            "Blocked",
+            "Done",
         ]
         assert [c.title for c in columns_from_template(plan_id, [])] == [
-            "Todo", "In Progress", "Blocked", "Done",
+            "Todo",
+            "In Progress",
+            "Blocked",
+            "Done",
         ]
 
     def test_default_column_ids_use_plan_prefix(self):

@@ -10,7 +10,7 @@ from clawforce.core.acp import RunStore
 from clawforce.core.database import get_database
 from clawforce.core.domain.runtime import AgentRuntimeBackend
 from clawforce.core.storage import StorageBackend
-from clawforce.core.store import AgentStore, PlanStore, Store, UserStore
+from clawforce.core.store import AgentStore, PlanStore, ShareStore, Store, UserStore
 from clawforce.core.store.activity_events import ActivityEventsStore
 from clawforce.core.store.agent_config import AgentConfigStore
 from clawforce.core.store.agent_variables import AgentVariablesStore
@@ -89,6 +89,10 @@ def get_plan_artifact_store(request: Request) -> PlanArtifactStore:
 
 def get_user_store(request: Request) -> UserStore:
     return UserStore(get_database())
+
+
+def get_share_store(request: Request) -> ShareStore:
+    return ShareStore(get_database())
 
 
 def get_runtime(request: Request) -> AgentRuntimeBackend:

@@ -102,9 +102,13 @@ export type Agent = {
   software_warnings?: { key: string; name: string; command: string }[];
   software_installing?: boolean;
   onboarding_completed?: boolean;
+  owner_user_id?: string;
+  /** Server-reported permission for the current caller on this agent. */
+  effective_permission?: "viewer" | "editor" | "manager" | "owner";
 };
 
-export type MainTab = "workspace" | "chat" | "jobs" | "logs" | "settings";
+export type MainTab = "workspace" | "chat" | "jobs" | "logs" | "settings" | "sharing";
+
 export type SettingsTab = "general" | "variables" | "channels" | "tools" | "skills" | "software";
 
 export type FieldDef = { name: string; label: string; type: "text" | "password" | "number" | "toggle" | "tags"; placeholder?: string };

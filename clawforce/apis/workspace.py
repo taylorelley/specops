@@ -18,11 +18,12 @@ from fastapi.responses import PlainTextResponse, Response
 from pydantic import BaseModel
 
 from clawforce.auth import get_current_user
-from clawforce.core.authz import require_agent_access
+from clawforce.core.authz import require_agent_read, require_agent_write
 from clawforce.core.domain.runtime import AgentRuntimeBackend, AgentRuntimeError
 from clawforce.core.path_utils import validate_path_for_api
 from clawforce.core.store.agents import AgentStore
-from clawforce.deps import get_agent_store, get_runtime
+from clawforce.core.store.shares import ShareStore
+from clawforce.deps import get_agent_store, get_runtime, get_share_store
 
 router = APIRouter(tags=["workspace"])
 
@@ -37,12 +38,13 @@ async def list_files(
     root: str = Query(ROOT_WORKSPACE, description="Root: workspace (r/w) or profiles (r/o)"),
     current: dict = Depends(get_current_user),
     store: AgentStore = Depends(get_agent_store),
+    share_store: ShareStore = Depends(get_share_store),
     runtime: AgentRuntimeBackend = Depends(get_runtime),
 ):
     agent = store.get_agent(agent_id)
     if not agent:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-    require_agent_access(current, agent)
+    require_agent_read(current, agent, share_store)
     try:
         if root == ROOT_PROFILES:
             files = await runtime.list_profile(agent_id)
@@ -76,12 +78,13 @@ async def read_file(
     download: bool = Query(False, description="Return as downloadable attachment"),
     current: dict = Depends(get_current_user),
     store: AgentStore = Depends(get_agent_store),
+    share_store: ShareStore = Depends(get_share_store),
     runtime: AgentRuntimeBackend = Depends(get_runtime),
 ):
     agent = store.get_agent(agent_id)
     if not agent:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-    require_agent_access(current, agent)
+    require_agent_read(current, agent, share_store)
     path = validate_path_for_api(path)
     try:
         is_profiles = path.startswith("profiles/")
@@ -134,12 +137,13 @@ async def write_file(
     body: WriteBody = Body(...),
     current: dict = Depends(get_current_user),
     store: AgentStore = Depends(get_agent_store),
+    share_store: ShareStore = Depends(get_share_store),
     runtime: AgentRuntimeBackend = Depends(get_runtime),
 ):
     agent = store.get_agent(agent_id)
     if not agent:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-    require_agent_access(current, agent)
+    require_agent_write(current, agent, share_store)
     path = validate_path_for_api(path)
     try:
         is_profiles = path.startswith("profiles/")
@@ -174,13 +178,14 @@ async def delete_file(
     path: str,
     current: dict = Depends(get_current_user),
     store: AgentStore = Depends(get_agent_store),
+    share_store: ShareStore = Depends(get_share_store),
     runtime: AgentRuntimeBackend = Depends(get_runtime),
 ):
     """Delete a file or directory in the workspace."""
     agent = store.get_agent(agent_id)
     if not agent:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-    require_agent_access(current, agent)
+    require_agent_write(current, agent, share_store)
     path = validate_path_for_api(path)
     if path.startswith("profiles/"):
         raise HTTPException(
@@ -215,13 +220,14 @@ async def rename_file(
     body: RenameBody = Body(...),
     current: dict = Depends(get_current_user),
     store: AgentStore = Depends(get_agent_store),
+    share_store: ShareStore = Depends(get_share_store),
     runtime: AgentRuntimeBackend = Depends(get_runtime),
 ):
     """Rename a file or directory in the workspace."""
     agent = store.get_agent(agent_id)
     if not agent:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-    require_agent_access(current, agent)
+    require_agent_write(current, agent, share_store)
     path = validate_path_for_api(path)
     if path.startswith("profiles/"):
         raise HTTPException(
@@ -259,13 +265,14 @@ async def move_file(
     body: MoveBody = Body(...),
     current: dict = Depends(get_current_user),
     store: AgentStore = Depends(get_agent_store),
+    share_store: ShareStore = Depends(get_share_store),
     runtime: AgentRuntimeBackend = Depends(get_runtime),
 ):
     """Move a file or directory in the workspace."""
     agent = store.get_agent(agent_id)
     if not agent:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-    require_agent_access(current, agent)
+    require_agent_write(current, agent, share_store)
     path = validate_path_for_api(path)
     dest_path = validate_path_for_api(body.dest_path)
     if path.startswith("profiles/") or dest_path.startswith("profiles/"):
@@ -303,6 +310,7 @@ async def download_folder_zip(
     folder: str,
     current: dict = Depends(get_current_user),
     store: AgentStore = Depends(get_agent_store),
+    share_store: ShareStore = Depends(get_share_store),
     runtime: AgentRuntimeBackend = Depends(get_runtime),
 ):
     """Download a folder as a zip archive.
@@ -313,7 +321,7 @@ async def download_folder_zip(
     agent = store.get_agent(agent_id)
     if not agent:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-    require_agent_access(current, agent)
+    require_agent_read(current, agent, share_store)
     folder = validate_path_for_api(folder)
 
     is_profiles = folder == ROOT_PROFILES or folder.startswith(f"{ROOT_PROFILES}/")

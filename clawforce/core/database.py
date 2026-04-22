@@ -37,6 +37,7 @@ CREATE INDEX IF NOT EXISTS idx_agents_token ON agents(agent_token);
 -- Plans table
 CREATE TABLE IF NOT EXISTS plans (
     id TEXT PRIMARY KEY,
+    owner_user_id TEXT DEFAULT '',
     name TEXT NOT NULL DEFAULT '',
     description TEXT DEFAULT '',
     status TEXT DEFAULT 'draft',
@@ -142,6 +143,30 @@ CREATE INDEX IF NOT EXISTS idx_activity_events_agent_id ON activity_events(agent
 CREATE INDEX IF NOT EXISTS idx_activity_events_agent_created ON activity_events(agent_id, id);
 CREATE INDEX IF NOT EXISTS idx_activity_events_plan ON activity_events(agent_id, plan_id, id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_activity_events_agent_event_id ON activity_events(agent_id, event_id) WHERE event_id IS NOT NULL;
+
+-- Agent shares (per-user access grants on an agent)
+CREATE TABLE IF NOT EXISTS agent_shares (
+    agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    permission TEXT NOT NULL CHECK (permission IN ('viewer', 'editor', 'manager')),
+    granted_by TEXT DEFAULT '',
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (agent_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_shares_user_id ON agent_shares(user_id);
+
+-- Plan shares (per-user access grants on a plan)
+CREATE TABLE IF NOT EXISTS plan_shares (
+    plan_id TEXT NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    permission TEXT NOT NULL CHECK (permission IN ('viewer', 'editor', 'manager')),
+    granted_by TEXT DEFAULT '',
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (plan_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_plan_shares_user_id ON plan_shares(user_id);
 """
 
 
@@ -176,10 +201,27 @@ class Database:
     def _migrate(self, conn: sqlite3.Connection) -> None:
         """Run schema migrations for existing databases."""
         # Add onboarding_completed to agents if missing
-        rows = conn.execute("PRAGMA table_info(agents)").fetchall()
-        cols = {r[1] for r in rows}
-        if "onboarding_completed" not in cols:
+        agent_cols = {r[1] for r in conn.execute("PRAGMA table_info(agents)").fetchall()}
+        if "onboarding_completed" not in agent_cols:
             conn.execute("ALTER TABLE agents ADD COLUMN onboarding_completed INTEGER DEFAULT 0")
+
+        # Add owner_user_id to plans if missing, then backfill to the first admin.
+        plan_cols = {r[1] for r in conn.execute("PRAGMA table_info(plans)").fetchall()}
+        if "owner_user_id" not in plan_cols:
+            conn.execute("ALTER TABLE plans ADD COLUMN owner_user_id TEXT DEFAULT ''")
+        seed_admin = conn.execute(
+            "SELECT id FROM users WHERE role = 'admin' ORDER BY created_at LIMIT 1"
+        ).fetchone()
+        if seed_admin is not None:
+            admin_id = seed_admin["id"]
+            conn.execute(
+                "UPDATE plans SET owner_user_id = ? WHERE owner_user_id IS NULL OR owner_user_id = ''",
+                (admin_id,),
+            )
+            conn.execute(
+                "UPDATE agents SET owner_user_id = ? WHERE owner_user_id IS NULL OR owner_user_id = ''",
+                (admin_id,),
+            )
 
 
 @lru_cache(maxsize=1)

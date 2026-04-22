@@ -16,9 +16,11 @@ import {
 import { usePlans, useActivatePlan, useDeactivatePlan, useDeletePlan } from "../lib/queries";
 import CreatePlanModal from "../components/CreatePlanModal";
 import Modal from "../components/Modal";
+import { useAuth } from "../contexts/AuthContext";
 
 export default function PlansList() {
   const { data: plans = [] } = usePlans();
+  const { user } = useAuth();
   const [modalOpen, setModalOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
   const activatePlan = useActivatePlan();
@@ -56,6 +58,11 @@ export default function PlansList() {
                     {plan.name}
                   </Link>
                   <Badge status={plan.status} />
+                  {plan.owner_user_id && user?.id && plan.owner_user_id !== user.id && (
+                    <span className="rounded px-1.5 py-px text-[10px] font-medium bg-claude-surface text-claude-text-muted ring-1 ring-claude-border">
+                      Shared
+                    </span>
+                  )}
                 </div>
                 {plan.description ? (
                   <p className="mt-0.5 line-clamp-2 text-xs text-claude-text-muted">{plan.description}</p>

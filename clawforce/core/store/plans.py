@@ -81,8 +81,24 @@ class PlanStore(BaseRepository[PlanDef]):
                 (datetime.now(timezone.utc).isoformat(), plan_id),
             )
 
-    def list_plans(self) -> list[PlanDef]:
-        plans = self.list_all()
+    def list_plans(self, visible_to_user_id: str | None = None) -> list[PlanDef]:
+        """List plans. If ``visible_to_user_id`` is given, restrict to plans the
+        user owns or has a share on. Pass ``None`` to list every plan (admin).
+        """
+        if visible_to_user_id is None:
+            plans = self.list_all()
+        else:
+            with self._db.connection() as conn:
+                rows = conn.execute(
+                    """SELECT p.* FROM plans p
+                       WHERE p.owner_user_id = ?
+                          OR EXISTS (
+                              SELECT 1 FROM plan_shares s
+                              WHERE s.plan_id = p.id AND s.user_id = ?
+                          )""",
+                    (visible_to_user_id, visible_to_user_id),
+                ).fetchall()
+                plans = [self._row_to_model(r) for r in rows]
         for p in plans:
             p.columns = self._get_columns(p.id)
             p.tasks = self._get_tasks(p.id)
@@ -98,8 +114,8 @@ class PlanStore(BaseRepository[PlanDef]):
         plan.agent_ids = self._get_assigned_agents(plan_id)
         return plan
 
-    def create_plan(self, name: str, description: str = "") -> PlanDef:
-        plan = PlanDef(name=name, description=description)
+    def create_plan(self, name: str, description: str = "", owner_user_id: str = "") -> PlanDef:
+        plan = PlanDef(name=name, description=description, owner_user_id=owner_user_id)
         d = plan.model_dump(by_alias=False)
         d.pop("columns", None)
         d.pop("tasks", None)
@@ -122,7 +138,11 @@ class PlanStore(BaseRepository[PlanDef]):
         return plan
 
     def create_plan_from_template(
-        self, name: str, description: str, template: dict
+        self,
+        name: str,
+        description: str,
+        template: dict,
+        owner_user_id: str = "",
     ) -> PlanDef:
         """Create a plan using the columns and tasks from a plan template.
 
@@ -140,7 +160,7 @@ class PlanStore(BaseRepository[PlanDef]):
         All inserts happen inside a single transaction so a mid-flight failure
         rolls back and leaves no half-built plan behind.
         """
-        plan = PlanDef(name=name, description=description)
+        plan = PlanDef(name=name, description=description, owner_user_id=owner_user_id)
         d = plan.model_dump(by_alias=False)
         d.pop("columns", None)
         d.pop("tasks", None)
@@ -176,9 +196,7 @@ class PlanStore(BaseRepository[PlanDef]):
             plan.tasks = []
             plan.agent_ids = []
 
-            assigned_agents = self._assign_agents_in_conn(
-                conn, plan.id, plan_agent_candidates
-            )
+            assigned_agents = self._assign_agents_in_conn(conn, plan.id, plan_agent_candidates)
             plan.agent_ids = list(assigned_agents)
 
             position_by_column: dict[str, int] = {}
@@ -228,9 +246,7 @@ class PlanStore(BaseRepository[PlanDef]):
                 )
         return plan
 
-    def _assign_agents_in_conn(
-        self, conn, plan_id: str, agent_ids: list[str]
-    ) -> set[str]:
+    def _assign_agents_in_conn(self, conn, plan_id: str, agent_ids: list[str]) -> set[str]:
         """Assign only the agent ids that currently exist, within an existing connection.
 
         Silently drops ids that have no matching ``agents`` row so stale template

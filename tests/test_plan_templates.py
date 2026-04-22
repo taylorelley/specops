@@ -14,7 +14,6 @@ from fastapi.testclient import TestClient
 
 from clawlib.plantemplateregistry import YamlPlanTemplateRegistry
 
-
 # ---------------------------------------------------------------------------
 # YamlPlanTemplateRegistry — pure unit tests (no FastAPI, no SQLite)
 # ---------------------------------------------------------------------------
@@ -295,7 +294,10 @@ class TestCreatePlanFromTemplate:
         assert resp.status_code == 200
         plan = resp.json()
         assert [c["title"] for c in plan["columns"]] == [
-            "Todo", "In Progress", "Blocked", "Done",
+            "Todo",
+            "In Progress",
+            "Blocked",
+            "Done",
         ]
         assert plan["tasks"] == []
 
@@ -308,7 +310,10 @@ class TestCreatePlanFromTemplate:
         assert resp.status_code == 200
         plan = resp.json()
         assert [c["title"] for c in plan["columns"]] == [
-            "Todo", "In Progress", "Blocked", "Done",
+            "Todo",
+            "In Progress",
+            "Blocked",
+            "Done",
         ]
         assert len(plan["tasks"]) == 5
         # All product-launch tasks route to the Todo column.
@@ -324,13 +329,19 @@ class TestCreatePlanFromTemplate:
         assert resp.status_code == 200
         plan = resp.json()
         assert [c["title"] for c in plan["columns"]] == [
-            "Triage", "Investigating", "Fix in Progress", "Verified",
+            "Triage",
+            "Investigating",
+            "Fix in Progress",
+            "Verified",
         ]
         # Bundled template seeds at least one task in every column.
         column_by_id = {c["id"]: c["title"] for c in plan["columns"]}
         titles_with_tasks = {column_by_id[t["column_id"]] for t in plan["tasks"]}
         assert titles_with_tasks == {
-            "Triage", "Investigating", "Fix in Progress", "Verified",
+            "Triage",
+            "Investigating",
+            "Fix in Progress",
+            "Verified",
         }
 
     def test_from_custom_template(self, client: TestClient, auth_headers):
@@ -372,9 +383,7 @@ class TestCreatePlanFromTemplate:
         )
         assert resp.status_code == 404
 
-    def test_task_with_unknown_column_falls_back_to_first(
-        self, client: TestClient, auth_headers
-    ):
+    def test_task_with_unknown_column_falls_back_to_first(self, client: TestClient, auth_headers):
         """Tasks referencing a column that doesn't exist should land in the first column."""
         created = client.post(
             "/api/plan-templates",
@@ -448,9 +457,7 @@ class TestAgentPreassignment:
         # A task-only agent must also end up on the plan's agents list.
         assert plan["agent_ids"] == ["agent-1"]
 
-    def test_missing_plan_agent_is_silently_skipped(
-        self, client: TestClient, auth_headers
-    ):
+    def test_missing_plan_agent_is_silently_skipped(self, client: TestClient, auth_headers):
         _seed_agents(["real-agent"])
         created = client.post(
             "/api/plan-templates",
@@ -472,9 +479,7 @@ class TestAgentPreassignment:
         plan = resp.json()
         assert plan["agent_ids"] == ["real-agent"]
 
-    def test_missing_task_agent_leaves_task_unassigned(
-        self, client: TestClient, auth_headers
-    ):
+    def test_missing_task_agent_leaves_task_unassigned(self, client: TestClient, auth_headers):
         _seed_agents(["real-agent"])
         created = client.post(
             "/api/plan-templates",
@@ -501,9 +506,7 @@ class TestAgentPreassignment:
         assert by_title["good owner"] == "real-agent"
         assert plan["agent_ids"] == ["real-agent"]
 
-    def test_add_template_with_agents_roundtrip(
-        self, client: TestClient, auth_headers
-    ):
+    def test_add_template_with_agents_roundtrip(self, client: TestClient, auth_headers):
         _seed_agents(["a1"])
         payload = {
             "id": "rt",

@@ -9,6 +9,7 @@ from typing import Any
 import httpx
 
 from clawbot.agent.tools.base import Tool
+from clawlib.http import httpx_verify
 
 
 def _api_base(url: str) -> str:
@@ -40,7 +41,7 @@ class _A2AToolBase(Tool):
         url = f"{self._base}{path}"
         headers = {"Authorization": f"Bearer {self._token}", "Content-Type": "application/json"}
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
+            async with httpx.AsyncClient(timeout=timeout, verify=httpx_verify()) as client:
                 req_kwargs: dict[str, Any] = {}
                 if payload is not None:
                     req_kwargs["json"] = payload

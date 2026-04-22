@@ -5,11 +5,12 @@ from clawforce.core.storage import StorageBackend, get_storage_backend
 from clawforce.core.store.agents import AgentStore
 from clawforce.core.store.base import BaseRepository
 from clawforce.core.store.plans import PlanStore
+from clawforce.core.store.shares import ShareStore
 from clawforce.core.store.users import UserStore
 
 
 class Store:
-    """Facade composing AgentStore, UserStore, and PlanStore.
+    """Facade composing AgentStore, UserStore, PlanStore, and ShareStore.
 
     Uses a single SQLite Database and optional StorageBackend (for agent workspace).
     """
@@ -20,6 +21,7 @@ class Store:
         self.agents = AgentStore(db, self._storage)
         self.users = UserStore(db)
         self.plans = PlanStore(db)
+        self.shares = ShareStore(db)
 
 
 __all__ = [
@@ -27,6 +29,7 @@ __all__ = [
     "BaseRepository",
     "Database",
     "PlanStore",
+    "ShareStore",
     "Store",
     "UserStore",
     "get_database",

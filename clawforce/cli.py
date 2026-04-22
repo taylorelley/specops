@@ -15,7 +15,7 @@ from clawforce.core.database import get_database
 from clawforce.core.storage import get_storage_backend
 from clawforce.core.store.agent_variables import AgentVariablesStore, default_git_variables
 from clawforce.core.store.agents import AgentStore
-from clawforce.core.store.users import UserStore
+from clawforce.core.store.users import VALID_ROLES, UserStore
 from clawforce.deps import get_fernet
 
 app = typer.Typer(name="clawforce", help="Multi-agent team admin", no_args_is_help=True)
@@ -233,12 +233,22 @@ def _user_store(data_dir: str) -> UserStore:
 def user_create(
     username: str = typer.Argument(..., help="Username to create"),
     password: str = typer.Option(None, "--password", "-p", help="Password (prompt if not set)"),
-    role: str = typer.Option("admin", "--role", "-r", help="User role (admin)"),
+    role: str = typer.Option(
+        "user",
+        "--role",
+        "-r",
+        help=f"User role ({', '.join(sorted(VALID_ROLES))})",
+    ),
     data_dir: str = typer.Option(
         DEFAULT_DATA_DIR, "--data-dir", "-d", help="Data directory (same as serve)"
     ),
 ):
-    """Create a new admin user."""
+    """Create a new user. Role defaults to 'user'; use '--role admin' for admin."""
+    if role not in VALID_ROLES:
+        console.print(
+            f"[red]Invalid role '{role}'. Expected one of: {', '.join(sorted(VALID_ROLES))}[/red]"
+        )
+        raise typer.Exit(1)
     store = _user_store(data_dir)
     if store.get_user_by_username(username):
         console.print(f"[red]User already exists: {username}[/red]")
@@ -255,12 +265,22 @@ def user_create(
 def user_update(
     username: str = typer.Argument(..., help="Username to update"),
     password: str = typer.Option(None, "--password", "-p", help="New password"),
-    role: str | None = typer.Option(None, "--role", "-r", help="New role"),
+    role: str | None = typer.Option(
+        None,
+        "--role",
+        "-r",
+        help=f"New role ({', '.join(sorted(VALID_ROLES))})",
+    ),
     data_dir: str = typer.Option(
         DEFAULT_DATA_DIR, "--data-dir", "-d", help="Data directory (same as serve)"
     ),
 ):
     """Update an existing user (role and/or password)."""
+    if role is not None and role not in VALID_ROLES:
+        console.print(
+            f"[red]Invalid role '{role}'. Expected one of: {', '.join(sorted(VALID_ROLES))}[/red]"
+        )
+        raise typer.Exit(1)
     store = _user_store(data_dir)
     user = store.get_user_by_username(username)
     if not user:

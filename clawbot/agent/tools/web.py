@@ -11,6 +11,8 @@ from urllib.parse import urlparse
 import httpx
 from readability import Document
 
+from clawlib.http import httpx_verify
+
 try:
     from ddgs import DDGS
 
@@ -116,7 +118,7 @@ class WebSearchTool(Tool):
 
     async def _search_brave(self, query: str, n: int) -> str:
         try:
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(verify=httpx_verify()) as client:
                 r = await client.get(
                     "https://api.search.brave.com/res/v1/web/search",
                     params={"q": query, "count": n},
@@ -136,7 +138,7 @@ class WebSearchTool(Tool):
 
     async def _search_serpapi(self, query: str, n: int) -> str:
         try:
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(verify=httpx_verify()) as client:
                 r = await client.get(
                     "https://serpapi.com/search",
                     params={
@@ -207,7 +209,10 @@ class WebFetchTool(Tool):
 
         try:
             async with httpx.AsyncClient(
-                follow_redirects=True, max_redirects=MAX_REDIRECTS, timeout=30.0
+                follow_redirects=True,
+                max_redirects=MAX_REDIRECTS,
+                timeout=30.0,
+                verify=httpx_verify(),
             ) as client:
                 r = await client.get(url, headers={"User-Agent": USER_AGENT})
                 r.raise_for_status()
