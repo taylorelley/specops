@@ -16,6 +16,7 @@ from oauth_cli_kit import get_token as get_codex_token
 from oauth_cli_kit.flow import _refresh_token
 
 from clawbot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
+from clawlib.http import httpx_verify
 
 DEFAULT_CODEX_URL = "https://chatgpt.com/backend-api/codex/responses"
 DEFAULT_ORIGINATOR = "clawbot"
@@ -88,12 +89,13 @@ class OpenAICodexProvider(LLMProvider):
         url = DEFAULT_CODEX_URL
 
         try:
+            initial_verify = httpx_verify()
             try:
                 content, tool_calls, finish_reason = await _request_codex(
-                    url, headers, body, verify=True
+                    url, headers, body, verify=initial_verify
                 )
             except Exception as e:
-                if "CERTIFICATE_VERIFY_FAILED" not in str(e):
+                if not initial_verify or "CERTIFICATE_VERIFY_FAILED" not in str(e):
                     raise
                 logger.warning(
                     "SSL certificate verification failed for Codex API; retrying with verify=False"

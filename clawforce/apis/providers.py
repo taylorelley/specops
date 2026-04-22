@@ -25,6 +25,7 @@ from pydantic import BaseModel
 from clawforce.auth import get_current_user
 from clawforce.core.store.agent_config import AgentConfigStore
 from clawforce.deps import get_agent_config_store
+from clawlib.http import httpx_verify
 
 router = APIRouter(tags=["providers"])
 
@@ -246,7 +247,7 @@ async def list_provider_models(
         url = api_base.rstrip("/") + "/models"
         headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
         try:
-            async with httpx.AsyncClient(timeout=15) as client:
+            async with httpx.AsyncClient(timeout=15, verify=httpx_verify()) as client:
                 resp = await client.get(url, headers=headers)
             if resp.status_code == 401:
                 raise HTTPException(
@@ -324,7 +325,7 @@ async def list_provider_models(
         headers.update(ep["extra_headers"])
 
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx.AsyncClient(timeout=15, verify=httpx_verify()) as client:
             resp = await client.get(url, headers=headers, params=params)
         if resp.status_code == 401:
             raise HTTPException(

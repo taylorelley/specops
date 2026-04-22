@@ -15,6 +15,7 @@ from clawbot.providers.openai_codex_provider import (
     _get_agent_oauth_token,
     _request_codex,
 )
+from clawlib.http import httpx_verify
 
 DEFAULT_CHATGPT_URL = "https://chatgpt.com/backend-api/codex/responses"
 DEFAULT_MODEL = "chatgpt/gpt-4o"
@@ -61,12 +62,13 @@ class ChatGPTProvider(OpenAICodexProvider):
             body["tools"] = _convert_tools(tools)
 
         try:
+            initial_verify = httpx_verify()
             try:
                 content, tool_calls, finish_reason = await _request_codex(
-                    DEFAULT_CHATGPT_URL, headers, body, verify=True
+                    DEFAULT_CHATGPT_URL, headers, body, verify=initial_verify
                 )
             except Exception as e:
-                if "CERTIFICATE_VERIFY_FAILED" not in str(e):
+                if not initial_verify or "CERTIFICATE_VERIFY_FAILED" not in str(e):
                     raise
                 logger.warning(
                     "SSL certificate verification failed for ChatGPT API; retrying with verify=False"

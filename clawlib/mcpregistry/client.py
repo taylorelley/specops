@@ -5,6 +5,7 @@ from urllib.parse import urlencode
 
 import httpx
 
+from clawlib.http import httpx_verify
 from clawlib.mcpregistry.models import MCPServerInfo
 
 logger = logging.getLogger(__name__)
@@ -44,7 +45,7 @@ class MCPRegistryClient:
         url = f"{self.base_url}?{urlencode(params)}"
 
         try:
-            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            async with httpx.AsyncClient(timeout=_TIMEOUT, verify=httpx_verify()) as client:
                 resp = await client.get(url)
                 resp.raise_for_status()
                 data = resp.json()
@@ -72,7 +73,7 @@ class MCPRegistryClient:
         url = f"{self.base_url}/{server_id}"
 
         try:
-            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            async with httpx.AsyncClient(timeout=_TIMEOUT, verify=httpx_verify()) as client:
                 resp = await client.get(url)
                 if resp.status_code == 404:
                     return None
