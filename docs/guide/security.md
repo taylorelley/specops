@@ -113,6 +113,14 @@ Three layers of protection run in order:
 - **stdio-based** (`command:`) — run as child processes; isolated by the container in Docker mode
 - **HTTP-based** (`url:`) — connect from the worker process; can make unrestricted outbound connections — use only with trusted servers
 
+### TLS Certificate Verification
+
+By default, every outbound HTTPS call (LLM providers, channel APIs, MCP HTTP servers, admin API, registries) and every SMTP/IMAP TLS connection verifies the remote certificate against the system trust store. `httpx` already honors `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE`, so the correct way to trust a private/internal CA in production is to install that bundle and point these variables at it.
+
+As a last-resort escape hatch for lab, air-gapped, or MITM-proxy environments, set `CLAWFORCE_DISABLE_SSL_VERIFY=1` (or `true`/`yes`/`on`) to turn verification off globally — in clawforce, clawbot, clawlib, and every agent container spawned by the Docker runtime (the variable is passed through automatically). A one-time warning is logged the first time any component reads the flag.
+
+**Never set this in production.** Disabling verification exposes the deployment to man-in-the-middle attacks on every outbound connection.
+
 ---
 
 ## Channel Access Control

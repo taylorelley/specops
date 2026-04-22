@@ -480,6 +480,10 @@ class DockerRuntime(WorkerRuntimeBase):
                 "PYTHONUNBUFFERED": "1",
             }
 
+            ssl_toggle = os.environ.get("CLAWFORCE_DISABLE_SSL_VERIFY")
+            if ssl_toggle:
+                env["CLAWFORCE_DISABLE_SSL_VERIFY"] = ssl_toggle
+
             variables_store = AgentVariablesStore(get_database())
             variables = variables_store.get_variables(agent_id)
             for key, value in variables.items():

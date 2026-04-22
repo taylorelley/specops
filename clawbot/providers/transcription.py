@@ -6,6 +6,8 @@ from pathlib import Path
 import httpx
 from loguru import logger
 
+from clawlib.http import httpx_verify
+
 
 class GroqTranscriptionProvider:
     """
@@ -38,7 +40,7 @@ class GroqTranscriptionProvider:
             return ""
 
         try:
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(verify=httpx_verify()) as client:
                 with open(path, "rb") as f:
                     files = {
                         "file": (path.name, f),

@@ -19,6 +19,7 @@ from mcp.client.streamable_http import streamable_http_client
 
 from clawbot.agent.tools.base import Tool, sanitize_tool_name
 from clawbot.agent.tools.registry import ToolRegistry
+from clawlib.http import httpx_verify, ssl_verify_disabled
 
 _NODE_COMMANDS = frozenset({"node", "npx", "tsx"})
 
@@ -219,7 +220,12 @@ async def connect_mcp_servers(
                 params = _build_stdio_params(cfg)
                 read, write = await stack.enter_async_context(stdio_client(params))
             elif cfg.url:
-                http_client = httpx.AsyncClient(headers=cfg.headers) if cfg.headers else None
+                http_client: httpx.AsyncClient | None = None
+                if cfg.headers or ssl_verify_disabled():
+                    http_client = httpx.AsyncClient(
+                        headers=cfg.headers or {},
+                        verify=httpx_verify(),
+                    )
                 read, write, _ = await stack.enter_async_context(
                     streamable_http_client(cfg.url, http_client=http_client)
                 )

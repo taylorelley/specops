@@ -14,6 +14,7 @@ from loguru import logger
 from clawlib.bus import MessageBus, OutboundMessage
 from clawlib.channels.base import BaseChannel
 from clawlib.config.schema import TeamsConfig
+from clawlib.http import httpx_verify
 
 TOKEN_URL = "https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token"
 
@@ -49,7 +50,7 @@ class TeamsChannel(BaseChannel):
         if not self.config.app_id or not self.config.app_password:
             return None
         if self._http is None:
-            self._http = httpx.AsyncClient(timeout=30.0)
+            self._http = httpx.AsyncClient(timeout=30.0, verify=httpx_verify())
         try:
             resp = await self._http.post(
                 TOKEN_URL,
@@ -72,7 +73,7 @@ class TeamsChannel(BaseChannel):
     async def start(self) -> None:
         """Teams channel does not run a loop — it receives via webhook push."""
         self._running = True
-        self._http = httpx.AsyncClient(timeout=30.0)
+        self._http = httpx.AsyncClient(timeout=30.0, verify=httpx_verify())
         logger.info("Teams channel ready (webhook-based)")
 
     async def stop(self) -> None:

@@ -17,6 +17,7 @@ from loguru import logger
 from clawlib.bus import MessageBus, OutboundMessage
 from clawlib.channels.base import BaseChannel
 from clawlib.config.schema import ZaloConfig
+from clawlib.http import httpx_verify
 
 ZALO_API_BASE = "https://bot-api.zaloplatforms.com/bot"
 MAX_TEXT_LEN = 2000  # Zalo API limit
@@ -98,7 +99,7 @@ class ZaloChannel(BaseChannel):
             return
 
         self._running = True
-        self._http = httpx.AsyncClient(timeout=60.0)
+        self._http = httpx.AsyncClient(timeout=60.0, verify=httpx_verify())
 
         logger.info("Starting Zalo channel (long-polling)...")
 

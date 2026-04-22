@@ -7,6 +7,8 @@ from urllib.parse import urlencode
 
 import httpx
 
+from clawlib.http import httpx_verify
+
 _SKILLS_TIMEOUT = 60
 _AGENTSKILL_API = "https://agentskill.sh/api/skills"
 
@@ -62,7 +64,7 @@ async def _fetch_agentskill_api(query: str, limit: int) -> list[dict]:
         params["category"] = "development"
     url = f"{_AGENTSKILL_API}?{urlencode(params)}"
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(timeout=15.0, verify=httpx_verify()) as client:
             resp = await client.get(url)
             resp.raise_for_status()
             data = resp.json()
