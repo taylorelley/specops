@@ -13,6 +13,7 @@ export const queryKeys = {
   skillsSearch: (q: string) => ["skills", "search", q] as const,
   customSkills: ["skills", "custom"] as const,
   mcpServers: (q: string) => ["mcp", "search", q] as const,
+  customMcpServers: ["mcp", "custom"] as const,
   softwareCatalog: ["software", "catalog"] as const,
   customSoftware: ["software", "custom"] as const,
   planTemplates: ["plan-templates"] as const,
@@ -297,6 +298,49 @@ export function useInstallMcpServer(agentId: string) {
     }) => api.mcpRegistry.install(agentId, config),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.agentConfig(agentId) });
+    },
+  });
+}
+
+export function useCustomMcpServers() {
+  return useQuery({
+    queryKey: queryKeys.customMcpServers,
+    queryFn: () => api.mcpRegistry.listCustom(),
+    staleTime: 30_000,
+  });
+}
+
+export function useAddCustomMcpServer() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (entry: import("./types").AddCustomMcpPayload) =>
+      api.mcpRegistry.addCustom(entry),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.customMcpServers });
+      qc.invalidateQueries({ queryKey: ["mcp", "search"] });
+    },
+  });
+}
+
+export function useUpdateCustomMcpServer() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ slug, entry }: { slug: string; entry: import("./types").AddCustomMcpPayload }) =>
+      api.mcpRegistry.updateCustom(slug, entry),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.customMcpServers });
+      qc.invalidateQueries({ queryKey: ["mcp", "search"] });
+    },
+  });
+}
+
+export function useDeleteCustomMcpServer() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (slug: string) => api.mcpRegistry.deleteCustom(slug),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.customMcpServers });
+      qc.invalidateQueries({ queryKey: ["mcp", "search"] });
     },
   });
 }

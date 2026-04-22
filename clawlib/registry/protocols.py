@@ -52,14 +52,38 @@ class SkillRegistry(Protocol):
 
 @runtime_checkable
 class MCPRegistry(Protocol):
-    """Protocol for MCP server marketplace search and details."""
+    """Protocol for MCP server marketplace search, details, and self-hosted CRUD."""
 
     async def search_mcp_servers(self, query: str, limit: int) -> list[dict]:
-        """Search for MCP servers. Returns list of dicts with id, name, description, etc."""
+        """Search for MCP servers. Returns list of dicts with id, name, description, etc.
+
+        Each entry SHOULD carry a ``source`` field identifying its origin
+        (e.g. ``"official"`` or ``"self-hosted"``).
+        """
         ...
 
     async def get_mcp_server(self, slug: str) -> dict | None:
         """Get details for a specific MCP server. Returns dict or None if not found."""
+        ...
+
+    def list_custom_entries(self) -> list[dict[str, Any]]:
+        """Return raw self-hosted catalog entries (including stored install_config)."""
+        ...
+
+    def get_entry(self, slug: str) -> dict[str, Any] | None:
+        """Return a self-hosted catalog entry by slug, or None if not found."""
+        ...
+
+    def add_custom_entry(self, entry: dict[str, Any]) -> None:
+        """Append a new self-hosted catalog entry."""
+        ...
+
+    def update_custom_entry(self, slug: str, entry: dict[str, Any]) -> bool:
+        """Update a self-hosted entry by slug. Returns True if found and updated."""
+        ...
+
+    def delete_custom_entry(self, slug: str) -> bool:
+        """Remove a self-hosted entry by slug. Returns True if found and removed."""
         ...
 
 

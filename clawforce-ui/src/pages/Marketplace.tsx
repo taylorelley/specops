@@ -1,17 +1,18 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { PageContainer, PageHeader, PlanIcon, TrashIcon } from "../components/ui";
-import { useTemplates, useSearchSkills, useSearchMcpServers, useSoftwareCatalog, useCustomSoftware, useAddCustomSoftware, useUpdateCustomSoftware, useDeleteCustomSoftware, usePlanTemplates, useCustomPlanTemplates, useDeleteCustomPlanTemplate, useCustomSkills, useDeleteCustomSkill } from "../lib/queries";
+import { useTemplates, useSearchSkills, useSearchMcpServers, useSoftwareCatalog, useCustomSoftware, useAddCustomSoftware, useUpdateCustomSoftware, useDeleteCustomSoftware, usePlanTemplates, useCustomPlanTemplates, useDeleteCustomPlanTemplate, useCustomSkills, useDeleteCustomSkill, useCustomMcpServers, useDeleteCustomMcpServer } from "../lib/queries";
 import CreateClawModal from "../components/CreateClawModal";
 import CreatePlanModal from "../components/CreatePlanModal";
 import TemplateDetailModal from "../components/TemplateDetailModal";
 import PlanTemplateDetailModal from "../components/PlanTemplateDetailModal";
 import AddPlanTemplateModal from "../components/AddPlanTemplateModal";
 import AddCustomSkillModal from "../components/AddCustomSkillModal";
+import AddCustomMcpModal from "../components/AddCustomMcpModal";
 import InstallSkillModal from "../components/InstallSkillModal";
 import InstallMcpModal from "../components/InstallMcpModal";
 import InstallSoftwareModal from "../components/InstallSoftwareModal";
-import type { MarketplaceSkill, MCPRegistryServer, SoftwareCatalogEntry, AddCustomSoftwarePayload, PlanTemplate, CustomSkillEntry } from "../lib/types";
+import type { MarketplaceSkill, MCPRegistryServer, SoftwareCatalogEntry, AddCustomSoftwarePayload, PlanTemplate, CustomSkillEntry, CustomMcpEntry } from "../lib/types";
 import {
   HiOutlineCommandLine,
   HiOutlineCodeBracket,
@@ -316,6 +317,7 @@ function TemplatesTab({ templates, isLoading }: { templates: { value: string; la
 }
 
 type SourceFilter = "all" | "agentskill.sh" | "self-hosted";
+type McpSourceFilter = "all" | "official" | "self-hosted";
 
 function SkillsTab() {
   const [searchInput, setSearchInput] = useState("");
@@ -670,62 +672,125 @@ function SkillCard({
 function McpTab() {
   const [searchInput, setSearchInput] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [sourceFilter, setSourceFilter] = useState<McpSourceFilter>("all");
   const { data: servers, isLoading, error } = useSearchMcpServers(searchQuery);
+  const { data: customEntries = [] } = useCustomMcpServers();
+  const deleteCustomMutation = useDeleteCustomMcpServer();
   const [selectedServer, setSelectedServer] = useState<MCPRegistryServer | null>(null);
   const [installServer, setInstallServer] = useState<MCPRegistryServer | null>(null);
+  const [showAddCustom, setShowAddCustom] = useState(false);
+  const [editCustom, setEditCustom] = useState<CustomMcpEntry | null>(null);
 
-  const sortedServers = servers
-    ? [...servers].sort((a, b) => (b.downloads || 0) - (a.downloads || 0))
-    : [];
+  const customBySlug = new Map(customEntries.map((e) => [e.slug, e]));
+
+  const filteredServers = (() => {
+    const seen = new Set<string>();
+    const out: MCPRegistryServer[] = [];
+    for (const s of servers ?? []) {
+      if (sourceFilter !== "all" && s.source !== sourceFilter) continue;
+      const key = `${s.source ?? "?"}:${s.id || s.slug}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(s);
+    }
+    // Self-hosted first, then by downloads desc.
+    out.sort((a, b) => {
+      const aKey = a.source === "self-hosted" ? 0 : 1;
+      const bKey = b.source === "self-hosted" ? 0 : 1;
+      if (aKey !== bKey) return aKey - bKey;
+      return (b.downloads || 0) - (a.downloads || 0);
+    });
+    return out;
+  })();
 
   function handleSearch(e: React.FormEvent) {
     e.preventDefault();
     setSearchQuery(searchInput.trim());
   }
 
+  function handleDeleteCustom(slug: string, name: string) {
+    if (window.confirm(`Remove "${name}" from self-hosted MCP servers?`)) {
+      deleteCustomMutation.mutate(slug);
+    }
+  }
+
+  const filterBtn = (f: McpSourceFilter, label: string) => (
+    <button
+      type="button"
+      onClick={() => setSourceFilter(f)}
+      className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
+        sourceFilter === f
+          ? "bg-white text-claude-text-primary shadow-sm"
+          : "text-claude-text-muted hover:text-claude-text-secondary"
+      }`}
+    >
+      {label}
+    </button>
+  );
+
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2 text-sm text-claude-text-secondary max-w-2xl">
-        <span>MCP servers extend your claws with external tools. Powered by</span>
-        <a
-          href="https://registry.modelcontextprotocol.io"
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex items-center gap-1 text-claude-accent hover:underline font-medium"
-        >
-          registry.modelcontextprotocol.io
-          <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-          </svg>
-        </a>
-      </div>
-
-      <form onSubmit={handleSearch} className="flex gap-2 max-w-2xl">
-        <div className="relative flex-1">
-          <svg className="absolute left-2.5 top-2.5 h-4 w-4 text-claude-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-          </svg>
-          <input
-            className={`${css.input} pl-8`}
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-            placeholder="Search MCP servers... (e.g. filesystem, github, postgres)"
-          />
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex items-center gap-2 text-sm text-claude-text-secondary max-w-2xl">
+          <span>MCP servers extend your claws with external tools. Powered by</span>
+          <a
+            href="https://registry.modelcontextprotocol.io"
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 text-claude-accent hover:underline font-medium"
+          >
+            registry.modelcontextprotocol.io
+            <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+            </svg>
+          </a>
+          <span>or add self-hosted entries.</span>
         </div>
         <button
-          type="submit"
-          disabled={isLoading}
-          className={`${css.btn} bg-claude-accent text-white hover:bg-claude-accent-hover disabled:opacity-40 shrink-0 min-w-[80px]`}
+          onClick={() => setShowAddCustom(true)}
+          className={`${css.btn} flex items-center gap-1.5 border border-claude-border bg-white hover:bg-claude-surface text-claude-text-primary text-xs shrink-0`}
         >
-          {isLoading ? (
-            <span className="inline-flex items-center gap-1">
-              <span className="h-1 w-1 rounded-full bg-white animate-pulse" />
-              <span className="h-1 w-1 rounded-full bg-white animate-pulse [animation-delay:150ms]" />
-              <span className="h-1 w-1 rounded-full bg-white animate-pulse [animation-delay:300ms]" />
-            </span>
-          ) : "Search"}
+          <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+          </svg>
+          Add Custom
         </button>
-      </form>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <form onSubmit={handleSearch} className="flex gap-2 flex-1 min-w-[240px] max-w-2xl">
+          <div className="relative flex-1">
+            <svg className="absolute left-2.5 top-2.5 h-4 w-4 text-claude-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            <input
+              className={`${css.input} pl-8`}
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              placeholder="Search MCP servers... (e.g. filesystem, github, postgres)"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={isLoading}
+            className={`${css.btn} bg-claude-accent text-white hover:bg-claude-accent-hover disabled:opacity-40 shrink-0 min-w-[80px]`}
+          >
+            {isLoading ? (
+              <span className="inline-flex items-center gap-1">
+                <span className="h-1 w-1 rounded-full bg-white animate-pulse" />
+                <span className="h-1 w-1 rounded-full bg-white animate-pulse [animation-delay:150ms]" />
+                <span className="h-1 w-1 rounded-full bg-white animate-pulse [animation-delay:300ms]" />
+              </span>
+            ) : "Search"}
+          </button>
+        </form>
+
+        <div className="flex rounded-lg border border-claude-border bg-claude-surface p-0.5 shrink-0">
+          {filterBtn("all", "All")}
+          {filterBtn("official", "Official")}
+          {filterBtn("self-hosted", "Self-hosted")}
+        </div>
+      </div>
 
       {error && (
         <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
@@ -745,48 +810,60 @@ function McpTab() {
         </div>
       )}
 
-      {!isLoading && sortedServers.length > 0 && (() => {
-        const displayServers = sortedServers.slice(0, Math.floor(sortedServers.length / 3) * 3);
-        return (
-          <div className="space-y-3">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {displayServers.map((server: MCPRegistryServer) => {
-                const serverId = server.id || server.slug;
-                return (
-                  <McpServerCard
-                    key={serverId}
-                    server={server}
-                    onSelect={() => setSelectedServer(server)}
-                    onInstall={() => setInstallServer(server)}
-                  />
-                );
-              })}
-            </div>
+      {!isLoading && filteredServers.length > 0 && (
+        <div className="space-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {filteredServers.map((server: MCPRegistryServer) => {
+              const serverId = server.id || server.slug;
+              const isSelfHosted = server.source === "self-hosted";
+              return (
+                <McpServerCard
+                  key={`${server.source ?? "?"}:${serverId}`}
+                  server={server}
+                  onSelect={() => setSelectedServer(server)}
+                  onInstall={() => setInstallServer(server)}
+                  onEdit={
+                    isSelfHosted && customBySlug.has(server.slug)
+                      ? () => setEditCustom(customBySlug.get(server.slug) ?? null)
+                      : undefined
+                  }
+                  onDelete={
+                    isSelfHosted && customBySlug.has(server.slug)
+                      ? () => handleDeleteCustom(server.slug, server.name)
+                      : undefined
+                  }
+                />
+              );
+            })}
           </div>
-        );
-      })()}
+        </div>
+      )}
 
-      {!isLoading && sortedServers.length === 0 && (
+      {!isLoading && filteredServers.length === 0 && (
         <div className="flex flex-col items-center justify-center py-12 text-claude-text-muted">
           <svg className="h-8 w-8 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
           <p className="text-sm">
-            {searchQuery
+            {sourceFilter === "self-hosted"
+              ? 'No self-hosted MCP servers yet. Click "Add Custom" to create one.'
+              : searchQuery
               ? `No MCP servers found for "${searchQuery}"`
               : "No MCP servers available."}
           </p>
-          <p className="text-xs mt-1">
-            Try different keywords or browse{" "}
-            <a
-              href="https://registry.modelcontextprotocol.io"
-              target="_blank"
-              rel="noreferrer"
-              className="text-claude-accent hover:underline"
-            >
-              registry.modelcontextprotocol.io
-            </a>
-          </p>
+          {sourceFilter !== "self-hosted" && (
+            <p className="text-xs mt-1">
+              Try different keywords or browse{" "}
+              <a
+                href="https://registry.modelcontextprotocol.io"
+                target="_blank"
+                rel="noreferrer"
+                className="text-claude-accent hover:underline"
+              >
+                registry.modelcontextprotocol.io
+              </a>
+            </p>
+          )}
         </div>
       )}
 
@@ -804,6 +881,15 @@ function McpTab() {
         onClose={() => setInstallServer(null)}
         server={installServer}
       />
+
+      <AddCustomMcpModal
+        open={showAddCustom || !!editCustom}
+        onClose={() => {
+          setShowAddCustom(false);
+          setEditCustom(null);
+        }}
+        entryToEdit={editCustom}
+      />
     </div>
   );
 }
@@ -818,12 +904,17 @@ function McpServerCard({
   server,
   onSelect,
   onInstall,
+  onEdit,
+  onDelete,
 }: {
   server: MCPRegistryServer;
   onSelect: () => void;
   onInstall: () => void;
+  onEdit?: () => void;
+  onDelete?: () => void;
 }) {
   const isVerified = server.verified || server.is_verified;
+  const isSelfHosted = server.source === "self-hosted";
   const downloads = server.downloads || 0;
   return (
     <div className="rounded-xl border border-claude-border bg-white p-4 hover:border-claude-accent/30 transition-colors flex flex-col">
@@ -835,7 +926,17 @@ function McpServerCard({
             </svg>
           </div>
           <div className="min-w-0">
-            <span className="text-sm font-medium text-claude-text-primary">{server.name}</span>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-sm font-medium text-claude-text-primary">{server.name}</span>
+              {isSelfHosted && (
+                <span
+                  className="rounded px-1.5 py-px text-[10px] font-medium bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200 shrink-0"
+                  title="Stored in this deployment's admin catalog"
+                >
+                  Self-hosted
+                </span>
+              )}
+            </div>
             {server.author && !/^\d+\.?\d*$/.test(server.author) && (
               <p className="text-[10px] text-claude-text-muted mt-0.5">by {server.author}</p>
             )}
@@ -885,12 +986,31 @@ function McpServerCard({
           )}
         </div>
         <div className="flex-1" />
-        <button
-          onClick={onInstall}
-          className={`${css.btn} bg-claude-accent text-white hover:bg-claude-accent-hover text-xs px-3 py-1.5`}
-        >
-          Install
-        </button>
+        <div className="flex items-center gap-1.5">
+          {onEdit && (
+            <button
+              onClick={onEdit}
+              className="rounded-md px-2 py-1 text-[11px] text-claude-text-secondary hover:text-claude-text-primary hover:bg-claude-surface transition-colors"
+            >
+              Edit
+            </button>
+          )}
+          {onDelete && (
+            <button
+              onClick={onDelete}
+              className="rounded-md p-1 text-claude-border-strong hover:text-red-500 hover:bg-red-50 transition-all"
+              title="Delete self-hosted MCP server"
+            >
+              <TrashIcon className="h-3.5 w-3.5" />
+            </button>
+          )}
+          <button
+            onClick={onInstall}
+            className={`${css.btn} bg-claude-accent text-white hover:bg-claude-accent-hover text-xs px-3 py-1.5`}
+          >
+            Install
+          </button>
+        </div>
       </div>
     </div>
   );

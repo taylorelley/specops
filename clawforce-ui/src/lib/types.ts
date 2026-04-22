@@ -215,6 +215,8 @@ export type AddCustomSkillPayload = {
   skill_content: string;
 };
 
+export type McpSource = "official" | "self-hosted";
+
 export type MCPRegistryServer = {
   id: string;
   slug: string;
@@ -233,8 +235,30 @@ export type MCPRegistryServer = {
   categories: string[];
   capabilities: string[];
   install_config: Record<string, unknown> | Record<string, unknown>[];
+  config_schema?: unknown[];
   required_env?: string[];
+  source?: McpSource;
 };
+
+export type CustomMcpInstallConfig =
+  | { command: string; args: string[] }
+  | { url: string };
+
+export type CustomMcpEntry = {
+  slug: string;
+  name: string;
+  description?: string;
+  author?: string;
+  version?: string;
+  categories?: string[];
+  homepage?: string;
+  repository?: string;
+  license?: string;
+  required_env?: string[];
+  install_config: CustomMcpInstallConfig;
+};
+
+export type AddCustomMcpPayload = CustomMcpEntry;
 
 export type WorkspaceFiles = {
   files: string[];

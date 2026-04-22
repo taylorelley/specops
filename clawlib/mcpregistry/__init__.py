@@ -11,10 +11,12 @@ from clawlib.mcpregistry.client import (
 )
 from clawlib.mcpregistry.models import MCPServerInfo
 from clawlib.mcpregistry.official_mcp import OfficialMCPRegistry
+from clawlib.mcpregistry.yaml_catalog import YamlMCPRegistry
 
 __all__ = [
     "MCPRegistryClient",
     "MCPServerInfo",
     "OfficialMCPRegistry",
+    "YamlMCPRegistry",
     "search_mcp_registry",
 ]

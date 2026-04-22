@@ -1,9 +1,11 @@
-"""API endpoints for the MCP server registry (registry.modelcontextprotocol.io by default)."""
+"""API endpoints for the MCP server registry (registry.modelcontextprotocol.io + self-hosted YAML catalog)."""
 
 import logging
+import re
+from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel, Field, field_validator
 
 from clawforce.apis.agents.crud import require_agent_access
 from clawforce.auth import get_current_user
@@ -21,19 +23,161 @@ router = APIRouter(tags=["mcp-registry"])
 @router.get("/api/mcp-registry/search")
 async def search_mcp_registry(
     q: str = "",
-    limit: int = 50,
+    limit: int = Query(50, ge=1, le=100),
     _: dict = Depends(get_current_user),
     registry=Depends(get_mcp_registry),
 ):
-    """Search the MCP server registry (official registry by default)."""
+    """Search the MCP server registry (official registry + self-hosted YAML catalog)."""
     try:
-        servers = await registry.search_mcp_servers(q.strip(), limit=min(limit, 100))
+        servers = await registry.search_mcp_servers(q.strip(), limit=limit)
     except Exception as e:
         logger.exception("MCP Registry search failed")
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail=f"MCP Registry error: {e!s}"
         )
+
+    # Stable ordering: self-hosted first, then by downloads desc.
+    def _sort_key(entry: dict) -> tuple[int, int]:
+        return (
+            0 if entry.get("source") == "self-hosted" else 1,
+            -int(entry.get("downloads", 0) or 0),
+        )
+
+    servers.sort(key=_sort_key)
     return servers
+
+
+# Slug rule for self-hosted MCP servers: filesystem/URL-safe. Mirrors the skills
+# rule to keep validation consistent across the marketplace surfaces.
+_CUSTOM_MCP_SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?$")
+# "servers" and "custom" collide with the registry route prefixes.
+_RESERVED_CUSTOM_MCP_SLUGS = frozenset({"custom", "search", "servers"})
+
+
+class CustomMCPRequest(BaseModel):
+    """Request body for adding or updating a self-hosted MCP server entry."""
+
+    slug: str = Field(..., description="Unique slug, e.g. my-internal-mcp")
+    name: str = Field(..., min_length=1)
+    description: str = ""
+    author: str = ""
+    version: str = ""
+    categories: list[str] = Field(default_factory=list)
+    homepage: str = ""
+    repository: str = ""
+    license: str = ""
+    required_env: list[str] = Field(default_factory=list)
+    install_config: dict[str, Any] = Field(
+        ...,
+        description="Either {'command': str, 'args': list[str]} or {'url': str}.",
+    )
+
+    @field_validator("slug")
+    @classmethod
+    def _validate_slug(cls, v: str) -> str:
+        if not v:
+            raise ValueError("slug must not be empty")
+        if v in _RESERVED_CUSTOM_MCP_SLUGS:
+            raise ValueError(f"slug '{v}' is reserved and cannot be used")
+        if not _CUSTOM_MCP_SLUG_RE.match(v):
+            raise ValueError(
+                "slug must be lowercase letters, digits, dashes or underscores "
+                "(no leading/trailing separator, no slashes)"
+            )
+        return v
+
+    @field_validator("required_env")
+    @classmethod
+    def _strip_required_env(cls, v: list[str]) -> list[str]:
+        return [s.strip() for s in v if s and s.strip()]
+
+    @field_validator("install_config")
+    @classmethod
+    def _validate_install_config(cls, v: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(v, dict):
+            raise ValueError("install_config must be an object")
+        has_command = "command" in v
+        has_url = "url" in v
+        if has_command == has_url:
+            raise ValueError("install_config must contain exactly one of 'command' or 'url'")
+        if has_command:
+            command = v.get("command")
+            if not isinstance(command, str) or not command.strip():
+                raise ValueError("install_config.command must be a non-empty string")
+            args = v.get("args", [])
+            if not isinstance(args, list) or any(not isinstance(a, str) for a in args):
+                raise ValueError("install_config.args must be a list of strings")
+            return {"command": command.strip(), "args": list(args)}
+        url = v.get("url")
+        if not isinstance(url, str) or not url.strip():
+            raise ValueError("install_config.url must be a non-empty string")
+        return {"url": url.strip()}
+
+
+@router.get("/api/mcp-registry/custom")
+async def list_custom_mcp_servers(
+    _: dict = Depends(get_current_user),
+    registry=Depends(get_mcp_registry),
+):
+    """Return admin-managed self-hosted MCP server entries."""
+    return registry.list_custom_entries()
+
+
+@router.post("/api/mcp-registry/custom", status_code=status.HTTP_201_CREATED)
+async def add_custom_mcp_server(
+    body: CustomMCPRequest,
+    _: dict = Depends(get_current_user),
+    registry=Depends(get_mcp_registry),
+):
+    """Add a self-hosted MCP server to the admin catalog."""
+    if registry.get_entry(body.slug):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"MCP server slug '{body.slug}' already exists in the catalog",
+        )
+    entry = body.model_dump(exclude_none=True)
+    registry.add_custom_entry(entry)
+    return entry
+
+
+@router.put("/api/mcp-registry/custom/{slug}")
+async def update_custom_mcp_server(
+    slug: str,
+    body: CustomMCPRequest,
+    _: dict = Depends(get_current_user),
+    registry=Depends(get_mcp_registry),
+):
+    """Update a self-hosted MCP server entry by slug."""
+    if body.slug != slug:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="URL slug and body slug must match",
+        )
+    entry = body.model_dump(exclude_none=True)
+    entry["slug"] = slug
+    updated = registry.update_custom_entry(slug, entry)
+    if not updated:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Self-hosted MCP server '{slug}' not found",
+        )
+    return entry
+
+
+@router.delete("/api/mcp-registry/custom/{slug}")
+async def delete_custom_mcp_server(
+    slug: str,
+    _: dict = Depends(get_current_user),
+    registry=Depends(get_mcp_registry),
+):
+    """Delete a self-hosted MCP server by slug."""
+    removed = registry.delete_custom_entry(slug)
+    if not removed:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Self-hosted MCP server '{slug}' not found",
+        )
+    return {"ok": True, "slug": slug}
 
 
 @router.get("/api/mcp-registry/servers/{server_id:path}")

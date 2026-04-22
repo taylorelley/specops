@@ -196,6 +196,20 @@ export const api = {
         `/agents/${agentId}/mcp-servers/install`,
         config
       ),
+    listCustom: () =>
+      request<import("./types").CustomMcpEntry[]>("/mcp-registry/custom"),
+    addCustom: (entry: import("./types").AddCustomMcpPayload) =>
+      post<import("./types").CustomMcpEntry>("/mcp-registry/custom", entry),
+    updateCustom: (slug: string, entry: import("./types").AddCustomMcpPayload) =>
+      put<import("./types").CustomMcpEntry>(
+        `/mcp-registry/custom/${encodeURIComponent(slug)}`,
+        entry
+      ),
+    deleteCustom: (slug: string) =>
+      request<{ ok: boolean; slug: string }>(
+        `/mcp-registry/custom/${encodeURIComponent(slug)}`,
+        { method: "DELETE" }
+      ),
   },
   mcp: {
     listServers: (agentId: string) =>
