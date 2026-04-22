@@ -18,6 +18,7 @@ from sse_starlette.sse import EventSourceResponse
 from clawforce.auth import decode_token, get_current_user, get_user_or_agent
 from clawforce.core.domain.runtime import AgentRuntimeBackend
 from clawforce.core.plan_access import (
+    effective_plan_permission,
     require_plan_owner,
     require_plan_read,
     require_plan_write,
@@ -108,8 +109,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["plans"])
 
 
-def _plan_response(plan) -> dict:
-    return plan.model_dump()
+def _plan_response(plan, *, effective_permission: str | None = None) -> dict:
+    data = plan.model_dump()
+    if effective_permission is not None:
+        data["effective_permission"] = effective_permission
+    return data
 
 
 def _build_plan_context_message(plan, agent_id: str = "") -> str:
@@ -243,11 +247,17 @@ def _build_plan_context_message(plan, agent_id: str = "") -> str:
 def list_plans(
     caller: dict = Depends(get_user_or_agent),
     store: PlanStore = Depends(get_plan_store),
+    share_store: ShareStore = Depends(get_share_store),
 ):
     # Agents still see every plan; their per-plan access is gated at read/write.
     if caller.get("type") == "user" and caller.get("role") != "admin":
-        return store.list_plans(visible_to_user_id=caller.get("id"))
-    return store.list_plans()
+        plans = store.list_plans(visible_to_user_id=caller.get("id"))
+    else:
+        plans = store.list_plans()
+    return [
+        _plan_response(p, effective_permission=effective_plan_permission(caller, p, share_store))
+        for p in plans
+    ]
 
 
 @router.post("/api/plans")
@@ -255,6 +265,7 @@ def create_plan(
     body: PlanCreate,
     caller: dict = Depends(get_user_or_agent),
     store: PlanStore = Depends(get_plan_store),
+    share_store: ShareStore = Depends(get_share_store),
 ):
     owner_user_id = caller.get("id", "") if caller.get("type") == "user" else ""
     if body.template_id:
@@ -279,7 +290,9 @@ def create_plan(
     if caller.get("type") == "agent":
         store.assign_agent(plan.id, caller["agent_id"])
         plan.agent_ids = [caller["agent_id"]]
-    return _plan_response(plan)
+    return _plan_response(
+        plan, effective_permission=effective_plan_permission(caller, plan, share_store)
+    )
 
 
 @router.get("/api/plans/{plan_id}")
@@ -292,8 +305,8 @@ def get_plan(
     plan = store.get_plan(plan_id)
     if not plan:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found")
-    require_plan_read(caller, plan, share_store)
-    return _plan_response(plan)
+    perm = require_plan_read(caller, plan, share_store)
+    return _plan_response(plan, effective_permission=perm)
 
 
 @router.put("/api/plans/{plan_id}")
@@ -307,10 +320,10 @@ def update_plan(
     plan = store.get_plan(plan_id)
     if not plan:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found")
-    require_plan_write({"type": "user", **caller}, plan, share_store)
+    perm = require_plan_write({"type": "user", **caller}, plan, share_store)
     kwargs = body.model_dump(exclude_unset=True)
     updated = store.update_plan(plan_id, **kwargs)
-    return _plan_response(updated)
+    return _plan_response(updated, effective_permission=perm)
 
 
 @router.delete("/api/plans/{plan_id}")
@@ -335,11 +348,14 @@ def delete_plan(
 def add_task(
     plan_id: str,
     body: TaskCreate,
-    _: dict = Depends(get_user_or_agent),
+    caller: dict = Depends(get_user_or_agent),
     store: PlanStore = Depends(get_plan_store),
+    share_store: ShareStore = Depends(get_share_store),
 ):
-    if not store.get_plan(plan_id):
+    plan = store.get_plan(plan_id)
+    if not plan:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found")
+    require_plan_write(caller, plan, share_store)
     task = store.add_task(
         plan_id,
         column_id=body.column_id,
@@ -499,11 +515,14 @@ async def update_task(
 def delete_task(
     plan_id: str,
     task_id: str,
-    _: dict = Depends(get_current_user),
+    caller: dict = Depends(get_current_user),
     store: PlanStore = Depends(get_plan_store),
+    share_store: ShareStore = Depends(get_share_store),
 ):
-    if not store.get_plan(plan_id):
+    plan = store.get_plan(plan_id)
+    if not plan:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found")
+    require_plan_write({"type": "user", **caller}, plan, share_store)
     if not store.delete_task(plan_id, task_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
     return {"ok": True}
@@ -654,11 +673,14 @@ async def add_task_comment(
 def delete_task_comment(
     plan_id: str,
     comment_id: str,
-    _: dict = Depends(get_current_user),
+    caller: dict = Depends(get_current_user),
     store: PlanStore = Depends(get_plan_store),
+    share_store: ShareStore = Depends(get_share_store),
 ):
-    if not store.get_plan(plan_id):
+    plan = store.get_plan(plan_id)
+    if not plan:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found")
+    require_plan_write({"type": "user", **caller}, plan, share_store)
     if not store.delete_comment(plan_id, comment_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Comment not found")
     return {"ok": True}
@@ -754,8 +776,9 @@ class AssistantRequest(BaseModel):
 async def plan_assistant(
     plan_id: str,
     body: AssistantRequest,
-    _: dict = Depends(get_current_user),
+    caller: dict = Depends(get_current_user),
     store: PlanStore = Depends(get_plan_store),
+    share_store: ShareStore = Depends(get_share_store),
     agent_store: AgentStore = Depends(get_agent_store),
     runtime: AgentRuntimeBackend = Depends(get_runtime),
 ):
@@ -768,6 +791,7 @@ async def plan_assistant(
     plan = store.get_plan(plan_id)
     if not plan:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found")
+    require_plan_write({"type": "user", **caller}, plan, share_store)
     agent = agent_store.get_agent(body.agent_id)
     if not agent:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
@@ -880,14 +904,16 @@ async def activate_plan(
 @router.post("/api/plans/{plan_id}/deactivate")
 async def deactivate_plan(
     plan_id: str,
-    _: dict = Depends(get_current_user),
+    caller: dict = Depends(get_current_user),
     store: PlanStore = Depends(get_plan_store),
+    share_store: ShareStore = Depends(get_share_store),
     runtime: AgentRuntimeBackend = Depends(get_runtime),
 ):
     """Notify agents that the plan is paused. Plan status becomes paused. Does NOT stop agents."""
     plan = store.get_plan(plan_id)
     if not plan:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found")
+    require_plan_write({"type": "user", **caller}, plan, share_store)
     await runtime.deactivate_plan(plan_id, plan.agent_ids or [])
     store.update_plan(plan_id, status="paused")
     return {"ok": True, "status": "paused"}
@@ -896,14 +922,16 @@ async def deactivate_plan(
 @router.post("/api/plans/{plan_id}/complete")
 async def complete_plan(
     plan_id: str,
-    _: dict = Depends(get_current_user),
+    caller: dict = Depends(get_current_user),
     store: PlanStore = Depends(get_plan_store),
+    share_store: ShareStore = Depends(get_share_store),
     runtime: AgentRuntimeBackend = Depends(get_runtime),
 ):
     """Mark a plan as completed. Notifies all assigned agents. Does NOT stop agents."""
     plan = store.get_plan(plan_id)
     if not plan:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found")
+    require_plan_write({"type": "user", **caller}, plan, share_store)
     await runtime.complete_plan(plan_id, plan.name, plan.agent_ids or [])
     store.update_plan(plan_id, status="completed")
     return {"ok": True, "status": "completed"}
@@ -974,14 +1002,16 @@ MAX_UPLOAD_SIZE = 50 * 1024 * 1024  # 50 MB
 async def upload_artifact(
     plan_id: str,
     file: UploadFile,
-    _: dict = Depends(get_current_user),
+    caller: dict = Depends(get_current_user),
     store: PlanStore = Depends(get_plan_store),
+    share_store: ShareStore = Depends(get_share_store),
     artifact_store: PlanArtifactStore = Depends(get_plan_artifact_store),
 ):
     """Upload a file as a plan artifact (drag-drop from the frontend)."""
     plan = store.get_plan(plan_id)
     if not plan:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found")
+    require_plan_write({"type": "user", **caller}, plan, share_store)
     data = await file.read()
     if len(data) > MAX_UPLOAD_SIZE:
         raise HTTPException(
@@ -1030,14 +1060,16 @@ def download_artifact(
 def delete_artifact(
     plan_id: str,
     artifact_id: str,
-    _: dict = Depends(get_current_user),
+    caller: dict = Depends(get_current_user),
     store: PlanStore = Depends(get_plan_store),
+    share_store: ShareStore = Depends(get_share_store),
     artifact_store: PlanArtifactStore = Depends(get_plan_artifact_store),
 ):
     """Delete a single plan artifact."""
     plan = store.get_plan(plan_id)
     if not plan:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found")
+    require_plan_write({"type": "user", **caller}, plan, share_store)
     if not artifact_store.delete_artifact(plan_id, artifact_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Artifact not found")
     return {"ok": True}
@@ -1048,14 +1080,16 @@ def rename_artifact(
     plan_id: str,
     artifact_id: str,
     body: ArtifactRename,
-    _: dict = Depends(get_current_user),
+    caller: dict = Depends(get_current_user),
     store: PlanStore = Depends(get_plan_store),
+    share_store: ShareStore = Depends(get_share_store),
     artifact_store: PlanArtifactStore = Depends(get_plan_artifact_store),
 ):
     """Rename a plan artifact."""
     plan = store.get_plan(plan_id)
     if not plan:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found")
+    require_plan_write({"type": "user", **caller}, plan, share_store)
     if not body.new_name or "/" in body.new_name or ".." in body.new_name:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid new name")
     artifact = artifact_store.rename_artifact(plan_id, artifact_id, body.new_name)
@@ -1071,14 +1105,16 @@ def move_artifact(
     plan_id: str,
     artifact_id: str,
     body: ArtifactMove,
-    _: dict = Depends(get_current_user),
+    caller: dict = Depends(get_current_user),
     store: PlanStore = Depends(get_plan_store),
+    share_store: ShareStore = Depends(get_share_store),
     artifact_store: PlanArtifactStore = Depends(get_plan_artifact_store),
 ):
     """Move a plan artifact to a different task (or no task)."""
     plan = store.get_plan(plan_id)
     if not plan:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found")
+    require_plan_write({"type": "user", **caller}, plan, share_store)
     if body.task_id and not any(t.id == body.task_id for t in plan.tasks):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Task not found in plan"
@@ -1094,6 +1130,7 @@ async def plan_logs(
     request: Request,
     plan_id: str,
     store: PlanStore = Depends(get_plan_store),
+    share_store: ShareStore = Depends(get_share_store),
     activity_store=Depends(get_activity_events_store),
 ):
     """SSE stream aggregating activity from all agents assigned to a plan.
@@ -1114,6 +1151,12 @@ async def plan_logs(
     plan = store.get_plan(plan_id)
     if not plan:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found")
+    caller = {
+        "type": "user",
+        "id": payload["sub"],
+        "role": payload.get("role", "user"),
+    }
+    require_plan_read(caller, plan, share_store)
 
     agent_ids = plan.agent_ids or []
 

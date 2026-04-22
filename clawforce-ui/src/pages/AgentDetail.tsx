@@ -296,8 +296,7 @@ export default function AgentDetail() {
 
   const canManageShares =
     agent.effective_permission === "owner" ||
-    agent.effective_permission === "manager" ||
-    agent.effective_permission === undefined; // admin response omits the field
+    agent.effective_permission === "manager";
   const mainTabs: { key: MainTab; label: string }[] = [
     { key: "workspace", label: "Workspace" },
     { key: "logs", label: "Logs" },
@@ -469,7 +468,7 @@ export default function AgentDetail() {
           }
         />
       )}
-      {mainTab === "sharing" && agent && (
+      {mainTab === "sharing" && agent && canManageShares && (
         <div className="rounded-lg border border-claude-border bg-claude-bg p-4">
           <h2 className="mb-3 text-sm font-semibold text-claude-text-primary">
             Sharing

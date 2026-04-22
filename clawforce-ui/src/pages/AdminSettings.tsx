@@ -4,9 +4,89 @@ import {
   type RuntimeInfo,
 } from "../lib/api";
 import { Card, PageHeader, PageContainer, Button, Input } from "../components/ui";
+import Modal from "../components/Modal";
 import { useAuth } from "../contexts/AuthContext";
 
 type TabType = "general" | "password" | "users";
+
+function ResetPasswordModal({
+  username,
+  onClose,
+  onSubmit,
+}: {
+  username: string;
+  onClose: () => void;
+  onSubmit: (newPassword: string) => Promise<void> | void;
+}) {
+  const [pw, setPw] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function handleSubmit() {
+    setErr("");
+    if (!pw) {
+      setErr("Password cannot be empty");
+      return;
+    }
+    if (pw !== confirm) {
+      setErr("Passwords do not match");
+      return;
+    }
+    setBusy(true);
+    try {
+      await onSubmit(pw);
+      onClose();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Failed to reset password");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal open={true} onClose={onClose} title={`Reset password — ${username}`}>
+      <div className="space-y-3">
+        {err && (
+          <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+            {err}
+          </div>
+        )}
+        <div>
+          <label className="mb-1 block text-xs font-medium text-claude-text-muted">
+            New password
+          </label>
+          <Input
+            type="password"
+            autoFocus
+            value={pw}
+            onChange={(e) => setPw(e.target.value)}
+            disabled={busy}
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-claude-text-muted">
+            Confirm new password
+          </label>
+          <Input
+            type="password"
+            value={confirm}
+            onChange={(e) => setConfirm(e.target.value)}
+            disabled={busy}
+          />
+        </div>
+        <div className="flex justify-end gap-2 pt-2">
+          <Button variant="secondary" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button onClick={handleSubmit} disabled={busy}>
+            {busy ? "Saving…" : "Set password"}
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
 
 type AdminUser = {
   id: string;
@@ -24,6 +104,7 @@ function UsersTab() {
   const [newPassword, setNewPassword] = useState("");
   const [newRole, setNewRole] = useState("user");
   const [creating, setCreating] = useState(false);
+  const [resetTarget, setResetTarget] = useState<AdminUser | null>(null);
 
   const load = useCallback(async () => {
     setError("");
@@ -76,15 +157,8 @@ function UsersTab() {
     }
   }
 
-  async function handleResetPassword(userId: string) {
-    const next = window.prompt("Enter a new password for this user:");
-    if (!next) return;
-    setError("");
-    try {
-      await api.users.update(userId, { password: next });
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to reset password");
-    }
+  async function submitResetPassword(userId: string, newPassword: string) {
+    await api.users.update(userId, { password: newPassword });
   }
 
   async function handleDelete(userId: string, username: string) {
@@ -191,7 +265,7 @@ function UsersTab() {
                   <td className="py-2 text-right space-x-3">
                     <button
                       type="button"
-                      onClick={() => handleResetPassword(u.id)}
+                      onClick={() => setResetTarget(u)}
                       className="text-xs text-claude-accent hover:underline"
                     >
                       Reset password
@@ -210,6 +284,14 @@ function UsersTab() {
             })}
           </tbody>
         </table>
+      )}
+
+      {resetTarget && (
+        <ResetPasswordModal
+          username={resetTarget.username}
+          onClose={() => setResetTarget(null)}
+          onSubmit={(pw) => submitResetPassword(resetTarget.id, pw)}
+        />
       )}
     </Card>
   );

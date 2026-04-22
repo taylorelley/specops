@@ -79,6 +79,14 @@ function put<T = void>(path: string, body: unknown): Promise<T> {
   });
 }
 
+function patch<T = void>(path: string, body: unknown): Promise<T> {
+  return request<T>(path, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
 export type RuntimeBackendOption = { value: string; label: string };
 
 export type DockerPreset = Record<string, unknown>;
@@ -424,13 +432,9 @@ export const api = {
         data,
       ),
     update: (id: string, data: { role?: string; password?: string }) =>
-      request<{ id: string; username: string; role: string; created_at: string }>(
+      patch<{ id: string; username: string; role: string; created_at: string }>(
         `/users/${id}`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(data),
-        },
+        data,
       ),
     delete: (id: string) =>
       request<{ ok: boolean }>(`/users/${id}`, { method: "DELETE" }),
@@ -438,26 +442,48 @@ export const api = {
   shares: {
     listForAgent: (agentId: string) =>
       request<
-        { agent_id: string; user_id: string; username: string; permission: string }[]
+        {
+          agent_id: string;
+          user_id: string;
+          username: string;
+          permission: import("./types").SharePermission;
+        }[]
       >(`/agents/${agentId}/shares`),
-    setForAgent: (agentId: string, userId: string, permission: string) =>
-      put<{ agent_id: string; user_id: string; username: string; permission: string }>(
-        `/agents/${agentId}/shares/${userId}`,
-        { permission },
-      ),
+    setForAgent: (
+      agentId: string,
+      userId: string,
+      permission: import("./types").SharePermission,
+    ) =>
+      put<{
+        agent_id: string;
+        user_id: string;
+        username: string;
+        permission: import("./types").SharePermission;
+      }>(`/agents/${agentId}/shares/${userId}`, { permission }),
     removeForAgent: (agentId: string, userId: string) =>
       request<{ ok: boolean }>(`/agents/${agentId}/shares/${userId}`, {
         method: "DELETE",
       }),
     listForPlan: (planId: string) =>
       request<
-        { plan_id: string; user_id: string; username: string; permission: string }[]
+        {
+          plan_id: string;
+          user_id: string;
+          username: string;
+          permission: import("./types").SharePermission;
+        }[]
       >(`/plans/${planId}/shares`),
-    setForPlan: (planId: string, userId: string, permission: string) =>
-      put<{ plan_id: string; user_id: string; username: string; permission: string }>(
-        `/plans/${planId}/shares/${userId}`,
-        { permission },
-      ),
+    setForPlan: (
+      planId: string,
+      userId: string,
+      permission: import("./types").SharePermission,
+    ) =>
+      put<{
+        plan_id: string;
+        user_id: string;
+        username: string;
+        permission: import("./types").SharePermission;
+      }>(`/plans/${planId}/shares/${userId}`, { permission }),
     removeForPlan: (planId: string, userId: string) =>
       request<{ ok: boolean }>(`/plans/${planId}/shares/${userId}`, {
         method: "DELETE",

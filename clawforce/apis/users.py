@@ -127,8 +127,16 @@ def update_user(
     new_role: str | None = None
     if body.role is not None:
         new_role = _require_valid_role(body.role)
+        demoting = user.role == "admin" and new_role != "admin"
+        # Prevent self-demotion so an admin cannot accidentally lock themselves
+        # out of the admin surface; another admin must do it.
+        if demoting and user_id == current.get("id"):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Cannot change your own admin role; ask another admin",
+            )
         # Prevent demoting the last admin.
-        if user.role == "admin" and new_role != "admin" and store.count_admins() <= 1:
+        if demoting and store.count_admins() <= 1:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Cannot demote the last admin user",

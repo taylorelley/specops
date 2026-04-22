@@ -28,6 +28,8 @@ export default function SharesPanel({
     useState<SharePermission>("viewer");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  // Serialise per-user writes so rapid clicks cannot race each other.
+  const [pendingByUser, setPendingByUser] = useState<Record<string, boolean>>({});
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -63,9 +65,20 @@ export default function SharesPanel({
     (u) => u.id !== ownerUserId && !sharedUserIds.has(u.id),
   );
 
+  function markPending(userId: string, pending: boolean) {
+    setPendingByUser((prev) => {
+      const next = { ...prev };
+      if (pending) next[userId] = true;
+      else delete next[userId];
+      return next;
+    });
+  }
+
   async function handleAdd() {
     if (!selectedUser) return;
+    if (pendingByUser[selectedUser]) return;
     setError("");
+    markPending(selectedUser, true);
     try {
       if (resourceType === "agent") {
         await api.shares.setForAgent(resourceId, selectedUser, selectedPermission);
@@ -77,11 +90,15 @@ export default function SharesPanel({
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to add share");
+    } finally {
+      markPending(selectedUser, false);
     }
   }
 
   async function handleUpdate(userId: string, permission: SharePermission) {
+    if (pendingByUser[userId]) return;
     setError("");
+    markPending(userId, true);
     try {
       if (resourceType === "agent") {
         await api.shares.setForAgent(resourceId, userId, permission);
@@ -91,11 +108,15 @@ export default function SharesPanel({
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to update share");
+    } finally {
+      markPending(userId, false);
     }
   }
 
   async function handleRemove(userId: string) {
+    if (pendingByUser[userId]) return;
     setError("");
+    markPending(userId, true);
     try {
       if (resourceType === "agent") {
         await api.shares.removeForAgent(resourceId, userId);
@@ -105,6 +126,8 @@ export default function SharesPanel({
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to remove share");
+    } finally {
+      markPending(userId, false);
     }
   }
 
@@ -146,37 +169,42 @@ export default function SharesPanel({
                   </td>
                 </tr>
               ) : (
-                shares.map((s) => (
-                  <tr key={s.user_id} className="border-t border-claude-border">
-                    <td className="py-2 text-claude-text-primary">
-                      {s.username || s.user_id}
-                    </td>
-                    <td className="py-2">
-                      <select
-                        value={s.permission}
-                        onChange={(e) =>
-                          handleUpdate(s.user_id, e.target.value as SharePermission)
-                        }
-                        className="rounded border border-claude-border bg-claude-bg px-2 py-1 text-xs"
-                      >
-                        {PERMISSIONS.map((p) => (
-                          <option key={p} value={p}>
-                            {p}
-                          </option>
-                        ))}
-                      </select>
-                    </td>
-                    <td className="py-2 text-right">
-                      <button
-                        type="button"
-                        onClick={() => handleRemove(s.user_id)}
-                        className="text-xs text-red-600 hover:underline"
-                      >
-                        Revoke
-                      </button>
-                    </td>
-                  </tr>
-                ))
+                shares.map((s) => {
+                  const pending = !!pendingByUser[s.user_id];
+                  return (
+                    <tr key={s.user_id} className="border-t border-claude-border">
+                      <td className="py-2 text-claude-text-primary">
+                        {s.username || s.user_id}
+                      </td>
+                      <td className="py-2">
+                        <select
+                          value={s.permission}
+                          onChange={(e) =>
+                            handleUpdate(s.user_id, e.target.value as SharePermission)
+                          }
+                          disabled={pending}
+                          className="rounded border border-claude-border bg-claude-bg px-2 py-1 text-xs disabled:opacity-50"
+                        >
+                          {PERMISSIONS.map((p) => (
+                            <option key={p} value={p}>
+                              {p}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="py-2 text-right">
+                        <button
+                          type="button"
+                          onClick={() => handleRemove(s.user_id)}
+                          disabled={pending}
+                          className="text-xs text-red-600 hover:underline disabled:opacity-40 disabled:no-underline"
+                        >
+                          Revoke
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -217,7 +245,10 @@ export default function SharesPanel({
                 ))}
               </select>
             </div>
-            <Button onClick={handleAdd} disabled={!selectedUser}>
+            <Button
+              onClick={handleAdd}
+              disabled={!selectedUser || !!pendingByUser[selectedUser]}
+            >
               Share
             </Button>
           </div>

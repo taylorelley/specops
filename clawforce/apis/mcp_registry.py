@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, field_validator
 
 from clawforce.auth import get_current_user
-from clawforce.core.authz import require_agent_read
+from clawforce.core.authz import require_agent_read, require_agent_write
 from clawforce.core.domain.runtime import AgentRuntimeBackend
 from clawforce.core.runtimes._worker_runtime import WorkerRuntimeBase
 from clawforce.core.store.agent_config import AgentConfigStore
@@ -326,8 +326,9 @@ async def list_mcp_server_tools(
 async def install_mcp_server(
     agent_id: str,
     body: MCPInstallRequest,
-    _: dict = Depends(get_current_user),
+    current: dict = Depends(get_current_user),
     store: AgentStore = Depends(get_agent_store),
+    share_store: ShareStore = Depends(get_share_store),
     agent_config_store: AgentConfigStore = Depends(get_agent_config_store),
     runtime: AgentRuntimeBackend = Depends(get_runtime),
 ):
@@ -338,6 +339,7 @@ async def install_mcp_server(
     agent = store.get_agent(agent_id)
     if not agent:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+    require_agent_write(current, agent, share_store)
 
     runtime_status = await runtime.get_status(agent_id)
     if runtime_status.status != "running":

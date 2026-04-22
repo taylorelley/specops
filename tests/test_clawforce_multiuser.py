@@ -404,3 +404,192 @@ class TestRoleValidation:
         store = UserStore(get_database())
         with pytest.raises(ValueError):
             store.create_user(username="x", password_hash="h", role="super_admin")
+
+
+class TestPermissionHelper:
+    def test_at_least_rejects_unknown_required(self):
+        from clawforce.core.domain.share import at_least
+
+        # Typo in required must not grant access.
+        assert at_least("manager", "edit") is False
+        assert at_least("owner", "bogus") is False
+
+    def test_at_least_rejects_unknown_actual(self):
+        from clawforce.core.domain.share import at_least
+
+        assert at_least("bogus", "viewer") is False
+
+    def test_at_least_normal_ordering(self):
+        from clawforce.core.domain.share import at_least
+
+        assert at_least("owner", "viewer") is True
+        assert at_least("editor", "manager") is False
+
+
+class TestPlanTaskAuthz:
+    def test_non_share_user_cannot_add_task(self, client: TestClient, alice_headers, bob_headers):
+        plan_id = client.post("/api/plans", headers=alice_headers, json={"name": "p"}).json()["id"]
+        col_id = client.get(f"/api/plans/{plan_id}", headers=alice_headers).json()["columns"][0][
+            "id"
+        ]
+        resp = client.post(
+            f"/api/plans/{plan_id}/tasks",
+            headers=bob_headers,
+            json={"column_id": col_id, "title": "mine"},
+        )
+        assert resp.status_code == 403
+
+    def test_viewer_cannot_add_task(self, client: TestClient, alice_headers, bob_headers):
+        plan_id = client.post("/api/plans", headers=alice_headers, json={"name": "p"}).json()["id"]
+        col_id = client.get(f"/api/plans/{plan_id}", headers=alice_headers).json()["columns"][0][
+            "id"
+        ]
+        bob_id = _user_id(client, bob_headers)
+        client.put(
+            f"/api/plans/{plan_id}/shares/{bob_id}",
+            headers=alice_headers,
+            json={"permission": "viewer"},
+        ).raise_for_status()
+        resp = client.post(
+            f"/api/plans/{plan_id}/tasks",
+            headers=bob_headers,
+            json={"column_id": col_id, "title": "attempt"},
+        )
+        assert resp.status_code == 403
+
+    def test_editor_can_add_and_delete_task(self, client: TestClient, alice_headers, bob_headers):
+        plan_id = client.post("/api/plans", headers=alice_headers, json={"name": "p"}).json()["id"]
+        col_id = client.get(f"/api/plans/{plan_id}", headers=alice_headers).json()["columns"][0][
+            "id"
+        ]
+        bob_id = _user_id(client, bob_headers)
+        client.put(
+            f"/api/plans/{plan_id}/shares/{bob_id}",
+            headers=alice_headers,
+            json={"permission": "editor"},
+        ).raise_for_status()
+
+        create = client.post(
+            f"/api/plans/{plan_id}/tasks",
+            headers=bob_headers,
+            json={"column_id": col_id, "title": "bob task"},
+        )
+        assert create.status_code == 200
+        task_id = create.json()["id"]
+
+        delete = client.delete(f"/api/plans/{plan_id}/tasks/{task_id}", headers=bob_headers)
+        assert delete.status_code == 200
+
+
+class TestEffectivePermissionOnResponses:
+    def test_plan_get_returns_effective_permission_for_owner(
+        self, client: TestClient, alice_headers
+    ):
+        plan_id = client.post("/api/plans", headers=alice_headers, json={"name": "p"}).json()["id"]
+        resp = client.get(f"/api/plans/{plan_id}", headers=alice_headers)
+        assert resp.status_code == 200
+        assert resp.json()["effective_permission"] == "owner"
+
+    def test_plan_list_includes_effective_permission_for_viewer(
+        self, client: TestClient, alice_headers, bob_headers
+    ):
+        plan_id = client.post("/api/plans", headers=alice_headers, json={"name": "p"}).json()["id"]
+        bob_id = _user_id(client, bob_headers)
+        client.put(
+            f"/api/plans/{plan_id}/shares/{bob_id}",
+            headers=alice_headers,
+            json={"permission": "viewer"},
+        ).raise_for_status()
+        plans = client.get("/api/plans", headers=bob_headers).json()
+        entry = next(p for p in plans if p["id"] == plan_id)
+        assert entry["effective_permission"] == "viewer"
+
+    def test_agent_list_includes_effective_permission(self, client: TestClient, alice_headers):
+        agent_id = client.post("/api/agents", headers=alice_headers, json={"name": "own"}).json()[
+            "id"
+        ]
+        agents = client.get("/api/agents", headers=alice_headers).json()
+        entry = next(a for a in agents if a["id"] == agent_id)
+        assert entry["effective_permission"] == "owner"
+
+
+class TestSetShareReturnsPersistedRow:
+    def test_plan_share_update_preserves_created_at(
+        self, client: TestClient, alice_headers, bob_headers
+    ):
+        plan_id = client.post("/api/plans", headers=alice_headers, json={"name": "p"}).json()["id"]
+        bob_id = _user_id(client, bob_headers)
+        first = client.put(
+            f"/api/plans/{plan_id}/shares/{bob_id}",
+            headers=alice_headers,
+            json={"permission": "viewer"},
+        ).json()
+        upgraded = client.put(
+            f"/api/plans/{plan_id}/shares/{bob_id}",
+            headers=alice_headers,
+            json={"permission": "editor"},
+        ).json()
+        assert upgraded["permission"] == "editor"
+        # The returned created_at must be the original (DB-preserved), not a new one.
+        assert upgraded["created_at"] == first["created_at"]
+
+
+class TestSelfDemotionBlocked:
+    def test_admin_cannot_demote_themselves_even_if_other_admins_exist(
+        self, client: TestClient, admin_headers
+    ):
+        # Create another admin so count_admins > 1.
+        client.post(
+            "/api/users",
+            headers=admin_headers,
+            json={"username": "secondary", "password": "pw", "role": "admin"},
+        ).raise_for_status()
+        root_id = _user_id(client, admin_headers)
+        resp = client.patch(
+            f"/api/users/{root_id}",
+            headers=admin_headers,
+            json={"role": "user"},
+        )
+        assert resp.status_code == 409
+
+
+class TestMcpInstallAuthz:
+    def test_non_owner_user_cannot_install_mcp_server(
+        self, client: TestClient, alice_headers, bob_headers
+    ):
+        agent_id = client.post("/api/agents", headers=alice_headers, json={"name": "a"}).json()[
+            "id"
+        ]
+        resp = client.post(
+            f"/api/agents/{agent_id}/mcp-servers/install",
+            headers=bob_headers,
+            json={
+                "server_id": "fake",
+                "server_name": "fake",
+                "command": "true",
+                "args": [],
+            },
+        )
+        assert resp.status_code == 403
+
+    def test_viewer_cannot_install_mcp_server(self, client: TestClient, alice_headers, bob_headers):
+        agent_id = client.post("/api/agents", headers=alice_headers, json={"name": "a"}).json()[
+            "id"
+        ]
+        bob_id = _user_id(client, bob_headers)
+        client.put(
+            f"/api/agents/{agent_id}/shares/{bob_id}",
+            headers=alice_headers,
+            json={"permission": "viewer"},
+        ).raise_for_status()
+        resp = client.post(
+            f"/api/agents/{agent_id}/mcp-servers/install",
+            headers=bob_headers,
+            json={
+                "server_id": "fake",
+                "server_name": "fake",
+                "command": "true",
+                "args": [],
+            },
+        )
+        assert resp.status_code == 403

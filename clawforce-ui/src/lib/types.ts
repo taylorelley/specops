@@ -149,6 +149,7 @@ export type AgentSummary = {
   color?: string;
   channels_enabled?: string[];
   owner_user_id?: string;
+  effective_permission?: EffectivePermission;
 };
 
 export type InboxEvent = {
@@ -336,6 +337,7 @@ export type Plan = {
   created_at: string;
   updated_at: string;
   owner_user_id?: string;
+  effective_permission?: EffectivePermission;
 };
 
 export type Share = {

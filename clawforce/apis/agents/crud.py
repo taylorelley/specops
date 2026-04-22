@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from clawforce.auth import get_current_user
 from clawforce.core.authz import (
+    effective_agent_permission,
     require_agent_owner,
     require_agent_read,
     require_agent_write,
@@ -104,6 +105,7 @@ async def list_all_agents(
     current: dict = Depends(get_current_user),
     store: AgentStore = Depends(get_agent_store),
     agent_config_store: AgentConfigStore = Depends(get_agent_config_store),
+    share_store: ShareStore = Depends(get_share_store),
     runtime: AgentRuntimeBackend = Depends(get_runtime),
 ):
     visible_to = None if current.get("role") == "admin" else current.get("id")
@@ -120,6 +122,7 @@ async def list_all_agents(
         agent_dict["channels_enabled"] = [
             ch for ch, cfg in channels.items() if isinstance(cfg, dict) and cfg.get("enabled")
         ]
+        agent_dict["effective_permission"] = effective_agent_permission(current, a, share_store)
         result.append(agent_dict)
     return result
 

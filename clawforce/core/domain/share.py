@@ -29,10 +29,19 @@ def permission_rank(permission: str) -> int:
 
 
 def at_least(actual: str | None, required: str) -> bool:
-    """True when actual permission meets or exceeds required. None is never enough."""
+    """True when actual permission meets or exceeds required.
+
+    Unknown ``required`` values fail closed (return False) so callers cannot
+    accidentally grant access by passing a typo like ``"edit"`` instead of
+    ``"editor"``. Unknown ``actual`` values likewise fail closed.
+    """
     if actual is None:
         return False
-    return permission_rank(actual) >= permission_rank(required)
+    if required not in _PERMISSION_RANK:
+        return False
+    if actual not in _PERMISSION_RANK:
+        return False
+    return _PERMISSION_RANK[actual] >= _PERMISSION_RANK[required]
 
 
 class AgentShare(Base):

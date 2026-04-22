@@ -53,28 +53,24 @@ class ShareStore:
         granted_by: str = "",
     ) -> AgentShare:
         perm = _require_permission(permission)
-        share = AgentShare(
-            agent_id=agent_id,
-            user_id=user_id,
-            permission=perm,  # type: ignore[arg-type]
-            granted_by=granted_by,
-        )
+        now = _now()
         with self._db.connection() as conn:
+            # ON CONFLICT preserves the original created_at, so the returned row
+            # is the source of truth for both new and updated shares.
             conn.execute(
                 """INSERT INTO agent_shares (agent_id, user_id, permission, granted_by, created_at)
                    VALUES (?, ?, ?, ?, ?)
                    ON CONFLICT(agent_id, user_id) DO UPDATE SET
                        permission = excluded.permission,
                        granted_by = excluded.granted_by""",
-                (
-                    share.agent_id,
-                    share.user_id,
-                    share.permission,
-                    share.granted_by,
-                    share.created_at,
-                ),
+                (agent_id, user_id, perm, granted_by, now),
             )
-        return share
+            row = conn.execute(
+                """SELECT agent_id, user_id, permission, granted_by, created_at
+                   FROM agent_shares WHERE agent_id = ? AND user_id = ?""",
+                (agent_id, user_id),
+            ).fetchone()
+        return AgentShare.model_validate(dict(row))
 
     def remove_agent_share(self, agent_id: str, user_id: str) -> bool:
         with self._db.connection() as conn:
@@ -119,12 +115,7 @@ class ShareStore:
         granted_by: str = "",
     ) -> PlanShare:
         perm = _require_permission(permission)
-        share = PlanShare(
-            plan_id=plan_id,
-            user_id=user_id,
-            permission=perm,  # type: ignore[arg-type]
-            granted_by=granted_by,
-        )
+        now = _now()
         with self._db.connection() as conn:
             conn.execute(
                 """INSERT INTO plan_shares (plan_id, user_id, permission, granted_by, created_at)
@@ -132,15 +123,14 @@ class ShareStore:
                    ON CONFLICT(plan_id, user_id) DO UPDATE SET
                        permission = excluded.permission,
                        granted_by = excluded.granted_by""",
-                (
-                    share.plan_id,
-                    share.user_id,
-                    share.permission,
-                    share.granted_by,
-                    share.created_at,
-                ),
+                (plan_id, user_id, perm, granted_by, now),
             )
-        return share
+            row = conn.execute(
+                """SELECT plan_id, user_id, permission, granted_by, created_at
+                   FROM plan_shares WHERE plan_id = ? AND user_id = ?""",
+                (plan_id, user_id),
+            ).fetchone()
+        return PlanShare.model_validate(dict(row))
 
     def remove_plan_share(self, plan_id: str, user_id: str) -> bool:
         with self._db.connection() as conn:

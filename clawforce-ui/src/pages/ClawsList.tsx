@@ -36,6 +36,11 @@ export default function ClawsList() {
         {claws.map((claw) => {
           const isRunning = claw.status === "running";
           const isTransitioning = claw.status === "provisioning" || claw.status === "connecting";
+          const canControl =
+            user?.role === "admin" ||
+            claw.effective_permission === "owner" ||
+            claw.effective_permission === "manager" ||
+            claw.effective_permission === "editor";
           return (
             <ListItem
               key={claw.id}
@@ -60,7 +65,7 @@ export default function ClawsList() {
                     </div>
                   )}
                   <div className="flex items-center gap-1.5">
-                {isRunning ? (
+                {canControl && isRunning ? (
                   <button
                     onClick={() => stopAgent.mutate(claw.id)}
                     disabled={stopAgent.isPending}
@@ -77,7 +82,7 @@ export default function ClawsList() {
                     </svg>
                     Starting
                   </span>
-                ) : (
+                ) : canControl ? (
                   <button
                     onClick={() => startAgent.mutate(claw.id)}
                     disabled={startAgent.isPending}
@@ -86,7 +91,7 @@ export default function ClawsList() {
                     <PlayIcon className="h-2.5 w-2.5" />
                     Start
                   </button>
-                )}
+                ) : null}
                     <Link
                       to={`/agents/${claw.id}`}
                       className="rounded p-1 text-claude-border-strong hover:text-claude-accent hover:bg-claude-surface transition-all"

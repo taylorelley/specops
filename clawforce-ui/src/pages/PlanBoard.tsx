@@ -1268,7 +1268,9 @@ export default function PlanBoard() {
         icon={<PlanIcon className="h-5 w-5" />}
         action={
           <div className="flex items-center gap-2">
-            {(user?.role === "admin" || plan.owner_user_id === user?.id) && (
+            {(user?.role === "admin" ||
+              plan.effective_permission === "owner" ||
+              plan.effective_permission === "manager") && (
               <Button
                 variant="secondary"
                 onClick={() => setSharesModalOpen(true)}
