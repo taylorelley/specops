@@ -1189,8 +1189,19 @@ export default function PlanBoard() {
 
   const unassignedCount = (plan.tasks ?? []).filter((t) => !t.agent_id).length;
 
-  const activateError = activatePlan.error as (Error & { detail?: { agents?: string[]; message?: string } }) | null;
+  const activateError = activatePlan.error as
+    | (Error & {
+        detail?: {
+          agents?: string[];
+          error?: string;
+          tasks?: { id: string; title: string }[];
+          message?: string;
+        };
+      })
+    | null;
   const agentsNotRunning = activateError?.detail?.agents ?? [];
+  const unassignedFromError =
+    activateError?.detail?.error === "unassigned_tasks" ? activateError?.detail?.tasks ?? [] : [];
 
   return (
     <PageContainer wide className="flex flex-col">
@@ -1214,6 +1225,26 @@ export default function PlanBoard() {
               </Link>
             ))}
           </p>
+          <button
+            type="button"
+            onClick={() => activatePlan.reset()}
+            className="mt-2 text-xs text-claude-text-muted hover:text-claude-text-primary"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+      {unassignedFromError.length > 0 && (
+        <div className="mb-3 rounded-lg border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-sm text-amber-700">
+          <p className="font-medium">
+            Activation failed: {unassignedFromError.length} task
+            {unassignedFromError.length !== 1 ? "s" : ""} must be assigned first.
+          </p>
+          <ul className="mt-1 text-claude-text-muted list-disc list-inside">
+            {unassignedFromError.map((t) => (
+              <li key={t.id}>{t.title}</li>
+            ))}
+          </ul>
           <button
             type="button"
             onClick={() => activatePlan.reset()}
@@ -1272,6 +1303,11 @@ export default function PlanBoard() {
             )}
             {plan.status === "paused" && (
               <>
+                {unassignedCount > 0 && (
+                  <span className="text-xs text-amber-600 font-medium">
+                    {unassignedCount} unassigned task{unassignedCount !== 1 ? "s" : ""}
+                  </span>
+                )}
                 <Button
                   onClick={() => activatePlan.mutate(planId)}
                   disabled={activatePlan.isPending}

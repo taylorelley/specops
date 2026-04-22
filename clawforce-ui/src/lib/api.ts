@@ -309,6 +309,14 @@ export const api = {
         e.detail = { agents: body.detail.agents, message: body.detail.message ?? "" };
         throw e;
       }
+      if (res.status === 409 && body.detail?.error === "unassigned_tasks") {
+        const tasks = body.detail.tasks ?? [];
+        const e = new Error(body.detail?.message ?? "Tasks are unassigned") as Error & {
+          detail?: { error: "unassigned_tasks"; tasks: { id: string; title: string }[]; message: string };
+        };
+        e.detail = { error: "unassigned_tasks", tasks, message: body.detail.message ?? "" };
+        throw e;
+      }
       if (!res.ok) throw new Error(body.detail?.message ?? body.detail ?? res.statusText);
       return body;
     },
