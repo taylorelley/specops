@@ -102,7 +102,7 @@ When opening an agent in the browser, workspace/profile endpoints may return **5
 
 **Other cases:**
 
-1. **Admin behind reverse proxy:** Ensure WebSocket upgrade is configured (e.g. nginx `proxy_http_version 1.1`, `proxy_set_header Upgrade`, `Connection`). Use the public URL (e.g. `https://admin.example.com`) so the agent can connect.
+1. **Admin behind reverse proxy:** Ensure WebSocket upgrade is configured (e.g. nginx `proxy_http_version 1.1`, `proxy_set_header Upgrade`, `Connection`). See the [Reverse Proxy guide](/guide/reverse-proxy) for full Caddy + Nginx recipes and the `ADMIN_PUBLIC_URL` tradeoff.
 
 2. **Remote Docker daemon:** `DOCKER_HOST` points to a remote host. Set `ADMIN_PUBLIC_URL` to an IP/hostname reachable from that host (e.g. the host's public IP).
 

@@ -47,6 +47,10 @@ docker run -d -p 8080:8080 \
   ghcr.io/saolalab/clawforce:latest
 ```
 
+## Behind a Reverse Proxy
+
+To host Clawforce on a public subdomain (e.g. `https://clawforce.example.com`) behind an existing reverse proxy, bind the container to loopback and point the proxy at it. See the [Reverse Proxy guide](/guide/reverse-proxy) for the full `docker run` + Caddy/Nginx recipe, WebSocket/SSE headers, and sticky-session setup.
+
 ## Native Install
 
 ```bash

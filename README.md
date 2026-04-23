@@ -215,6 +215,32 @@ podman run -d -p 8080:8080 \
   ghcr.io/saolalab/clawforce:latest
 ```
 
+### Deploy Behind a Reverse Proxy
+
+Host Clawforce on a public subdomain (e.g. `https://clawforce.example.com`) behind your existing reverse proxy. Bind the container to loopback so only the proxy reaches it, and set the public origin for CORS:
+
+```bash
+docker run -d --name clawforce --restart unless-stopped \
+  -p 127.0.0.1:8080:8080 \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v $HOME/.clawforce-data:/data \
+  -e AGENT_STORAGE_HOST_PATH=$HOME/.clawforce-data \
+  -e ADMIN_SETUP_USERNAME=admin \
+  -e ADMIN_SETUP_PASSWORD='change-me-now' \
+  -e CORS_ORIGINS=https://clawforce.example.com \
+  ghcr.io/saolalab/clawforce:latest
+```
+
+Then point your proxy at it. **Caddy** is the shortest working example — TLS and WebSocket upgrades are automatic:
+
+```caddy
+clawforce.example.com {
+    reverse_proxy 127.0.0.1:8080
+}
+```
+
+For **Nginx**, `docker-compose`, multi-worker sticky sessions, and the `ADMIN_PUBLIC_URL` tradeoff for sibling agent containers, see the [Reverse Proxy guide](https://saolalab.github.io/clawforce/guide/reverse-proxy).
+
 ### Native Install
 
 ```bash

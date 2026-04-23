@@ -22,6 +22,7 @@ export default defineConfig({
             { text: "Quick Start", link: "/guide/quickstart" },
             { text: "Product Principles", link: "/guide/principles" },
             { text: "Configuration", link: "/guide/configuration" },
+            { text: "Reverse Proxy", link: "/guide/reverse-proxy" },
             { text: "Channels", link: "/guide/channels" },
             { text: "Plans", link: "/guide/plans" },
             { text: "Security", link: "/guide/security" },
