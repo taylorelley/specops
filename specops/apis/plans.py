@@ -444,6 +444,7 @@ def update_column(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Column title cannot be empty"
         )
     kwargs = body.model_dump(exclude_unset=True)
+    kwargs = {k: v for k, v in kwargs.items() if v is not None}
     if "title" in kwargs:
         kwargs["title"] = kwargs["title"].strip()
     column = store.update_column(plan_id, column_id, **kwargs)
