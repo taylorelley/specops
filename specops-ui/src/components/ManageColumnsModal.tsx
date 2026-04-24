@@ -78,16 +78,33 @@ export default function ManageColumnsModal({ open, onClose, plan }: ManageColumn
     const current = sortedColumns[index];
     const other = sortedColumns[targetIndex];
     setRowError(null);
+
+    // Use sentinel position to avoid intermediate duplicate positions
+    const maxPosition = Math.max(...sortedColumns.map(col => col.position));
+    const sentinelPosition = maxPosition + 1;
+    const currentOriginalPosition = current.position;
+    const otherOriginalPosition = other.position;
+
     try {
+      // Step 1: Move current to sentinel position
       await updateColumn.mutateAsync({
         columnId: current.id,
-        data: { position: other.position },
+        data: { position: sentinelPosition },
       });
+
+      // Step 2: Move other to current's original position
       await updateColumn.mutateAsync({
         columnId: other.id,
-        data: { position: current.position },
+        data: { position: currentOriginalPosition },
+      });
+
+      // Step 3: Move current from sentinel to other's original position
+      await updateColumn.mutateAsync({
+        columnId: current.id,
+        data: { position: otherOriginalPosition },
       });
     } catch (err) {
+      // Determine which column failed to set appropriate error
       setRowError({
         columnId: current.id,
         message: err instanceof Error ? err.message : "Failed to reorder column",
