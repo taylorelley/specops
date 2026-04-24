@@ -19,6 +19,7 @@ import {
   usePlan,
   useSpecialAgents,
   useUpdateTask,
+  useReviewTask,
   useDeleteTask,
   useAssignAgent,
   useRemoveAgent,
@@ -61,6 +62,10 @@ const EVENT_LABELS: Record<string, EventMeta> = {
   agent_stopped: { label: "Stopped", summary: "Agent stopped", isLifecycle: true },
   task_status_changed: { label: "Task", summary: "Task status changed", isLifecycle: true },
   task_comment: { label: "Comment", summary: "Added a comment", isLifecycle: true },
+  task_review_requested: { label: "Review", summary: "Awaiting human review", isLifecycle: true },
+  task_review_approved: { label: "Review", summary: "Review approved", isLifecycle: true },
+  task_review_rejected: { label: "Review", summary: "Review rejected", isLifecycle: true },
+  task_review_pending: { label: "Review", summary: "Review reset to pending", isLifecycle: true },
 };
 
 function getEventDisplay(eventType: string): EventMeta {
@@ -391,12 +396,26 @@ function taskStatusColor(columnId: string): string {
   }
 }
 
+function reviewPillClass(status: PlanTaskType["review_status"]): string {
+  switch (status) {
+    case "approved":
+      return "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300";
+    case "rejected":
+      return "bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300";
+    case "pending":
+      return "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200";
+    default:
+      return "";
+  }
+}
+
 function TaskCard({
   task,
   planId,
   agentName,
   statusLabel,
   columnId,
+  columnKind,
   onView,
   onEdit,
 }: {
@@ -405,12 +424,17 @@ function TaskCard({
   agentName?: string;
   statusLabel: string;
   columnId: string;
+  columnKind?: "standard" | "review";
   onView: (task: PlanTaskType) => void;
   onEdit: (task: PlanTaskType) => void;
 }) {
   const [dragging, setDragging] = useState(false);
   const didDragRef = useRef(false);
   const deleteTask = useDeleteTask(planId);
+  const reviewTask = useReviewTask(planId);
+  const inReviewColumn = columnKind === "review";
+  const requiresReview = task.requires_review !== false;
+  const reviewStatus = task.review_status ?? null;
 
   function handleDragStart(e: React.DragEvent) {
     didDragRef.current = true;
@@ -486,7 +510,47 @@ function TaskCard({
           >
             {statusLabel}
           </span>
+          {reviewStatus ? (
+            <span
+              className={`inline-flex rounded-full px-1.5 py-0.5 font-medium ${reviewPillClass(reviewStatus)}`}
+              title={task.review_note ? `Note: ${task.review_note}` : undefined}
+            >
+              review: {reviewStatus}
+            </span>
+          ) : null}
+          {inReviewColumn && !requiresReview ? (
+            <span className="inline-flex rounded-full px-1.5 py-0.5 font-medium bg-claude-surface text-claude-text-muted">
+              review: skipped
+            </span>
+          ) : null}
         </div>
+        {inReviewColumn && requiresReview && reviewStatus !== "approved" ? (
+          <div className="mt-2 flex items-center gap-2 border-t border-claude-border/60 pt-2">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                reviewTask.mutate({ taskId: task.id, decision: "approved" });
+              }}
+              disabled={reviewTask.isPending}
+              className="rounded-md bg-emerald-600 px-2 py-1 text-[11px] font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+            >
+              Approve
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                const note = window.prompt("Reason for rejection (optional)") ?? "";
+                reviewTask.mutate({ taskId: task.id, decision: "rejected", note });
+              }}
+              disabled={reviewTask.isPending}
+              className="rounded-md border border-rose-600 px-2 py-1 text-[11px] font-medium text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 disabled:opacity-50"
+            >
+              Reject
+            </button>
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -538,17 +602,30 @@ function KanbanColumn({
 
   const agentMap = Object.fromEntries(agents.map((a) => [a.id, a.name]));
 
+  const isReview = column.kind === "review";
+
   return (
     <div
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
-      className={`flex min-w-0 flex-1 flex-col border-r border-claude-border last:border-r-0 transition-colors ${
-        over ? "bg-claude-accent/5" : ""
-      }`}
+      className={`flex min-w-0 flex-1 flex-col border-r last:border-r-0 transition-colors ${
+        isReview ? "border-amber-400/50" : "border-claude-border"
+      } ${over ? "bg-claude-accent/5" : ""} ${isReview ? "bg-amber-50/30 dark:bg-amber-950/10" : ""}`}
     >
-      <h3 className="shrink-0 border-b border-claude-border px-4 py-2.5 text-xs font-semibold uppercase tracking-wide text-claude-text-muted">
-        {column.title}
+      <h3
+        className={`shrink-0 border-b px-4 py-2.5 text-xs font-semibold uppercase tracking-wide ${
+          isReview
+            ? "border-amber-400/50 text-amber-700 dark:text-amber-300 flex items-center justify-between"
+            : "border-claude-border text-claude-text-muted"
+        }`}
+      >
+        <span>{column.title}</span>
+        {isReview ? (
+          <span className="rounded-full bg-amber-200/60 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-amber-800 dark:bg-amber-900/60 dark:text-amber-200">
+            Review gate
+          </span>
+        ) : null}
       </h3>
       <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-3">
         {tasks.map((task) => (
@@ -559,6 +636,7 @@ function KanbanColumn({
             agentName={task.agent_id ? agentMap[task.agent_id] : undefined}
             statusLabel={column.title}
             columnId={column.id}
+            columnKind={column.kind}
             onView={onViewTask}
             onEdit={onEditTask}
           />

@@ -27,15 +27,22 @@ class PlanStore(BaseRepository[PlanDef]):
     def _get_columns(self, plan_id: str) -> list[PlanColumn]:
         with self._db.connection() as conn:
             rows = conn.execute(
-                "SELECT id, title, position FROM plan_columns WHERE plan_id = ? ORDER BY position",
+                "SELECT id, title, position, kind FROM plan_columns WHERE plan_id = ? ORDER BY position",
                 (plan_id,),
             ).fetchall()
-            return [PlanColumn.model_validate(dict(r)) for r in rows]
+            out: list[PlanColumn] = []
+            for r in rows:
+                d = dict(r)
+                d["kind"] = d.get("kind") or "standard"
+                out.append(PlanColumn.model_validate(d))
+            return out
 
     def _get_tasks(self, plan_id: str) -> list[PlanTask]:
         with self._db.connection() as conn:
             rows = conn.execute(
-                """SELECT id, title, description, column_id, agent_id, position, created_at, updated_at
+                """SELECT id, title, description, column_id, agent_id, position,
+                          requires_review, review_status, reviewed_by, reviewed_at, review_note,
+                          created_at, updated_at
                    FROM plan_tasks WHERE plan_id = ? ORDER BY position, created_at""",
                 (plan_id,),
             ).fetchall()
@@ -44,6 +51,13 @@ class PlanStore(BaseRepository[PlanDef]):
                 d = dict(r)
                 d["column_id"] = d.get("column_id") or ""
                 d["agent_id"] = d.get("agent_id") or ""
+                d["requires_review"] = bool(d.get("requires_review", 1))
+                d["reviewed_by"] = d.get("reviewed_by") or ""
+                d["reviewed_at"] = d.get("reviewed_at") or ""
+                d["review_note"] = d.get("review_note") or ""
+                # review_status is nullable; leave as None when absent.
+                if d.get("review_status") in (None, ""):
+                    d["review_status"] = None
                 out.append(PlanTask.model_validate(d))
             return out
 
@@ -129,8 +143,8 @@ class PlanStore(BaseRepository[PlanDef]):
             )
             for col in _default_plan_columns(plan.id):
                 conn.execute(
-                    "INSERT INTO plan_columns (id, plan_id, title, position) VALUES (?, ?, ?, ?)",
-                    (col.id, plan.id, col.title, col.position),
+                    "INSERT INTO plan_columns (id, plan_id, title, position, kind) VALUES (?, ?, ?, ?, ?)",
+                    (col.id, plan.id, col.title, col.position, col.kind),
                 )
         plan.columns = _default_plan_columns(plan.id)
         plan.tasks = []
@@ -188,8 +202,8 @@ class PlanStore(BaseRepository[PlanDef]):
             )
             for col in resolved_columns:
                 conn.execute(
-                    "INSERT INTO plan_columns (id, plan_id, title, position) VALUES (?, ?, ?, ?)",
-                    (col.id, plan.id, col.title, col.position),
+                    "INSERT INTO plan_columns (id, plan_id, title, position, kind) VALUES (?, ?, ?, ?, ?)",
+                    (col.id, plan.id, col.title, col.position, col.kind),
                 )
 
             plan.columns = resolved_columns
@@ -215,16 +229,20 @@ class PlanStore(BaseRepository[PlanDef]):
                 position_by_column[column_id] = position + 1
                 raw_task_agent = str(raw.get("agent_id", "") or "")
                 task_agent_id = raw_task_agent if raw_task_agent in assigned_agents else ""
+                requires_review = bool(raw.get("requires_review", True))
                 task = PlanTask(
                     title=title,
                     description=description_text,
                     column_id=column_id,
                     agent_id=task_agent_id,
                     position=position,
+                    requires_review=requires_review,
                 )
                 conn.execute(
-                    """INSERT INTO plan_tasks (id, plan_id, column_id, agent_id, title, description, position, created_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    """INSERT INTO plan_tasks
+                           (id, plan_id, column_id, agent_id, title, description, position,
+                            requires_review, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         task.id,
                         plan.id,
@@ -233,6 +251,7 @@ class PlanStore(BaseRepository[PlanDef]):
                         task.title,
                         task.description,
                         task.position,
+                        1 if task.requires_review else 0,
                         task.created_at,
                         task.updated_at,
                     ),
@@ -321,6 +340,7 @@ class PlanStore(BaseRepository[PlanDef]):
         title: str = "",
         description: str = "",
         agent_id: str = "",
+        requires_review: bool = True,
     ) -> PlanTask | None:
         plan = self.get_plan(plan_id)
         if not plan:
@@ -340,11 +360,14 @@ class PlanStore(BaseRepository[PlanDef]):
             column_id=column_id,
             agent_id=agent_id,
             position=max_pos + 1,
+            requires_review=requires_review,
         )
         with self._db.connection() as conn:
             conn.execute(
-                """INSERT INTO plan_tasks (id, plan_id, column_id, agent_id, title, description, position, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                """INSERT INTO plan_tasks
+                       (id, plan_id, column_id, agent_id, title, description, position,
+                        requires_review, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     task.id,
                     plan_id,
@@ -353,6 +376,7 @@ class PlanStore(BaseRepository[PlanDef]):
                     task.title,
                     task.description,
                     task.position,
+                    1 if task.requires_review else 0,
                     task.created_at,
                     task.updated_at,
                 ),
@@ -373,6 +397,12 @@ class PlanStore(BaseRepository[PlanDef]):
         column_id: str | None = None,
         agent_id: str | None = None,
         position: int | None = None,
+        requires_review: bool | None = None,
+        review_status: str | None = None,
+        reviewed_by: str | None = None,
+        reviewed_at: str | None = None,
+        review_note: str | None = None,
+        clear_review_status: bool = False,
     ) -> PlanTask | None:
         plan = self.get_plan(plan_id)
         if not plan:
@@ -389,10 +419,27 @@ class PlanStore(BaseRepository[PlanDef]):
                     t.agent_id = agent_id
                 if position is not None:
                     t.position = position
+                if requires_review is not None:
+                    t.requires_review = requires_review
+                if clear_review_status:
+                    t.review_status = None
+                    t.reviewed_by = ""
+                    t.reviewed_at = ""
+                    t.review_note = ""
+                elif review_status is not None:
+                    t.review_status = review_status  # type: ignore[assignment]
+                if reviewed_by is not None:
+                    t.reviewed_by = reviewed_by
+                if reviewed_at is not None:
+                    t.reviewed_at = reviewed_at
+                if review_note is not None:
+                    t.review_note = review_note
                 t.updated_at = datetime.now(timezone.utc).isoformat()
                 with self._db.connection() as conn:
                     conn.execute(
-                        """UPDATE plan_tasks SET title = ?, description = ?, column_id = ?, agent_id = ?, position = ?, updated_at = ?
+                        """UPDATE plan_tasks SET title = ?, description = ?, column_id = ?, agent_id = ?,
+                               position = ?, requires_review = ?, review_status = ?, reviewed_by = ?,
+                               reviewed_at = ?, review_note = ?, updated_at = ?
                            WHERE id = ?""",
                         (
                             t.title,
@@ -400,6 +447,11 @@ class PlanStore(BaseRepository[PlanDef]):
                             t.column_id or None,
                             t.agent_id or None,
                             t.position,
+                            1 if t.requires_review else 0,
+                            t.review_status,
+                            t.reviewed_by,
+                            t.reviewed_at,
+                            t.review_note,
                             t.updated_at,
                             task_id,
                         ),

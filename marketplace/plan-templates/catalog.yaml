@@ -56,7 +56,8 @@
   name: Bug Triage
   description: >-
     Intake and prioritise a batch of bugs with a clear pipeline from report
-    through to verified fix.
+    through to verified fix. Includes a human review gate before a fix can
+    be marked verified.
   author: SpecOps
   categories:
     - engineering
@@ -68,8 +69,11 @@
       position: 1
     - title: Fix in Progress
       position: 2
-    - title: Verified
+    - title: Review
       position: 3
+      kind: review
+    - title: Verified
+      position: 4
   tasks:
     - title: Intake new reports
       description: Pull fresh bug reports from support channels and issue tracker.

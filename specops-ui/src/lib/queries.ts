@@ -558,6 +558,22 @@ export function useUpdateTask(planId: string) {
   });
 }
 
+export function useReviewTask(planId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      taskId,
+      decision,
+      note,
+    }: {
+      taskId: string;
+      decision: import("./types").ReviewStatus;
+      note?: string;
+    }) => api.plans.reviewTask(planId, taskId, { decision, note }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.plan(planId) }),
+  });
+}
+
 export function useDeleteTask(planId: string) {
   const qc = useQueryClient();
   return useMutation({

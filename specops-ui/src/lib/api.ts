@@ -296,6 +296,12 @@ export const api = {
       post<import("./types").PlanTask>(`/plans/${planId}/tasks`, data),
     updateTask: (planId: string, taskId: string, data: Partial<import("./types").PlanTask>) =>
       put<import("./types").PlanTask>(`/plans/${planId}/tasks/${taskId}`, data),
+    reviewTask: (
+      planId: string,
+      taskId: string,
+      data: { decision: import("./types").ReviewStatus; note?: string },
+    ) =>
+      post<import("./types").PlanTask>(`/plans/${planId}/tasks/${taskId}/review`, data),
     deleteTask: (planId: string, taskId: string) =>
       request<{ ok: boolean }>(`/plans/${planId}/tasks/${taskId}`, { method: "DELETE" }),
     listComments: (planId: string, taskId: string) =>

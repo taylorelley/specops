@@ -3,14 +3,26 @@
 import re
 import uuid
 from datetime import datetime, timezone
+from typing import Literal
 
 from pydantic import Field
 
 from specops.core.domain.agent import Base
 
+ColumnKind = Literal["standard", "review"]
+"""Column types. A "review" column gates task progression on human approval."""
+
+ReviewStatus = Literal["pending", "approved", "rejected"]
+
 
 class PlanTask(Base):
-    """A single task on a plan board."""
+    """A single task on a plan board.
+
+    Review fields are only meaningful when the task is (or has been) sitting in
+    a column of kind ``review``. ``requires_review`` defaults to True so tasks
+    in a review-gated plan respect the gate; a human can flip it False on a
+    per-task basis to bypass review for that task.
+    """
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     title: str = ""
@@ -18,16 +30,27 @@ class PlanTask(Base):
     column_id: str = ""
     agent_id: str = ""
     position: int = 0
+    requires_review: bool = True
+    review_status: ReviewStatus | None = None
+    reviewed_by: str = ""
+    reviewed_at: str = ""
+    review_note: str = ""
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
 class PlanColumn(Base):
-    """A column on a plan Kanban board."""
+    """A column on a plan Kanban board.
+
+    ``kind`` is "standard" for normal columns. A "review" column requires a
+    human approval before any task with ``requires_review=True`` can be moved
+    out of it — see ``specops.apis.plans`` for the enforcement path.
+    """
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     title: str = ""
     position: int = 0
+    kind: ColumnKind = "standard"
 
 
 class TaskComment(Base):
@@ -67,9 +90,11 @@ def columns_from_template(plan_id: str, template_columns: list[dict] | None) -> 
 
     If template_columns is empty or None, returns the four default columns.
     Otherwise, each entry must have a ``title``; ``position`` is optional and
-    defaults to its index in the list. Column IDs follow the ``{plan_id}-col-{slug}``
-    convention so ``PlanStore._resolve_column_id`` keeps working for short-name
-    task references.
+    defaults to its index in the list. ``kind`` is optional and defaults to
+    ``"standard"``; set it to ``"review"`` to mark the column as a human review
+    gate. Column IDs follow the ``{plan_id}-col-{slug}`` convention so
+    ``PlanStore._resolve_column_id`` keeps working for short-name task
+    references.
 
     Duplicate or slug-equivalent titles (e.g., "Review" and "review") are
     deduplicated with a numeric suffix (``-2``, ``-3``, …) so the resulting ids
@@ -91,11 +116,14 @@ def columns_from_template(plan_id: str, template_columns: list[dict] | None) -> 
             slug = f"{base_slug}-{suffix}"
             suffix += 1
         used_slugs.add(slug)
+        raw_kind = str(col.get("kind", "standard") or "standard").strip().lower()
+        kind: ColumnKind = "review" if raw_kind == "review" else "standard"
         out.append(
             PlanColumn(
                 id=f"{plan_id}-col-{slug}",
                 title=title,
                 position=int(position),
+                kind=kind,
             )
         )
     return out

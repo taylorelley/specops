@@ -9,6 +9,8 @@ import asyncio
 import json
 import logging
 import re as _re
+from datetime import datetime, timezone
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, status
 from fastapi.responses import Response
@@ -75,6 +77,20 @@ class TaskUpdate(BaseModel):
     column_id: str | None = None
     agent_id: str | None = None
     position: int | None = None
+    requires_review: bool | None = None
+
+
+class TaskReview(BaseModel):
+    """Body for POST /api/plans/{plan_id}/tasks/{task_id}/review.
+
+    ``decision`` records the reviewer's verdict. Only humans can call the
+    review endpoint (agents cannot approve their own work).
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    decision: Literal["approved", "rejected", "pending"]
+    note: str = ""
 
 
 class CommentCreate(BaseModel):
@@ -419,6 +435,13 @@ async def update_task(
                 detail="Agent can only change the status of tasks assigned to them",
             )
 
+    # Agents cannot toggle requires_review — only humans may opt a task out of review.
+    if caller.get("type") == "agent" and "requires_review" in kwargs:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only humans can change requires_review on a task",
+        )
+
     # Task must have an assignee before its status can be changed
     if "column_id" in kwargs:
         effective_agent_id = kwargs.get("agent_id") or (old_task.agent_id if old_task else "")
@@ -427,6 +450,46 @@ async def update_task(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Task must be assigned to an agent before its status can be changed",
             )
+
+    # Review gate enforcement (only when column_id is changing)
+    entering_review_col = False
+    if "column_id" in kwargs and old_task is not None:
+        resolved_target_id = store._resolve_column_id(plan, kwargs["column_id"])
+        old_col = next((c for c in plan.columns if c.id == old_task.column_id), None)
+        new_col = next((c for c in plan.columns if c.id == resolved_target_id), None)
+        leaving_review = bool(old_col and old_col.kind == "review")
+        entering_review_col = bool(new_col and new_col.kind == "review")
+
+        # Agents cannot move a task OUT of a review column unless reviewed.
+        if (
+            leaving_review
+            and old_task.requires_review
+            and old_task.review_status != "approved"
+        ):
+            # Humans with plan-write may still push the task backwards or forwards
+            # — this gate only blocks agents (who cannot approve their own work).
+            if caller.get("type") == "agent":
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "Task is in a review column and has not been approved yet. "
+                        "A human must approve the review before the task can progress."
+                    ),
+                )
+
+        # Entering a review column: pend it (unless already pending/approved/rejected
+        # and the caller isn't changing requires_review=False in the same request).
+        if entering_review_col and kwargs.get("requires_review", old_task.requires_review):
+            # Reset reviewer metadata and mark as pending so downstream listeners know.
+            kwargs["review_status"] = "pending"
+            kwargs["reviewed_by"] = ""
+            kwargs["reviewed_at"] = ""
+            kwargs["review_note"] = ""
+
+        # Leaving a review column clears the stale review state so a future
+        # re-entry re-triggers a pending review.
+        if leaving_review and resolved_target_id != old_task.column_id:
+            kwargs["clear_review_status"] = True
 
     task = store.update_task(plan_id, task_id, **kwargs)
     if not task:
@@ -489,6 +552,30 @@ async def update_task(
             except Exception as exc:
                 logger.warning(f"Failed to emit task status activity for agent {aid}: {exc}")
 
+        # If the task entered a review column and still requires review, notify
+        # plan watchers that a human review is needed. Separate event type so
+        # reviewers can filter their feed.
+        if entering_review_col and task.requires_review:
+            review_content = (
+                f"Task **{task.title}** entered review column **{new_label}** "
+                f"and is awaiting human approval."
+            )
+            for aid in plan.agent_ids or []:
+                try:
+                    ev = ActivityEvent(
+                        agent_id=aid,
+                        event_type="task_review_requested",
+                        channel="admin",
+                        content=review_content,
+                        plan_id=plan_id,
+                    )
+                    activity_store.insert(ev)
+                    runtime.emit_activity(aid, ev)
+                except Exception as exc:
+                    logger.warning(
+                        f"Failed to emit review-requested activity for agent {aid}: {exc}"
+                    )
+
         if plan.status == "active" and plan.agent_ids:
             message = _build_task_status_notification(effective_plan, task, old_column_id)
             caller_agent_id = caller.get("agent_id") if caller.get("type") == "agent" else None
@@ -509,6 +596,75 @@ async def update_task(
                     logger.warning(f"Failed to notify agent {aid} of task status change: {exc}")
 
     return task.model_dump()
+
+
+@router.post("/api/plans/{plan_id}/tasks/{task_id}/review")
+def review_task(
+    plan_id: str,
+    task_id: str,
+    body: TaskReview,
+    caller: dict = Depends(get_current_user),
+    store: PlanStore = Depends(get_plan_store),
+    share_store: ShareStore = Depends(get_share_store),
+    activity_store=Depends(get_activity_events_store),
+    runtime: AgentRuntimeBackend = Depends(get_runtime),
+):
+    """Record a human review decision on a task.
+
+    Only humans (``get_current_user``) may call this endpoint. The task must be
+    sitting in a column of kind ``review``; otherwise the request is a 409 so
+    we don't accidentally stamp a decision on a non-review task.
+    """
+    plan = store.get_plan(plan_id)
+    if not plan:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found")
+    require_plan_write({"type": "user", **caller}, plan, share_store)
+
+    task = next((t for t in plan.tasks if t.id == task_id), None)
+    if not task:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+
+    current_col = next((c for c in plan.columns if c.id == task.column_id), None)
+    if not current_col or current_col.kind != "review":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Task is not in a review column",
+        )
+
+    now = datetime.now(timezone.utc).isoformat()
+    reviewer_id = caller.get("id", "") or caller.get("username", "")
+    updated = store.update_task(
+        plan_id,
+        task_id,
+        review_status=body.decision,
+        reviewed_by=reviewer_id,
+        reviewed_at=now,
+        review_note=body.note or "",
+    )
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+
+    event_type = f"task_review_{body.decision}"
+    reviewer_label = caller.get("username") or reviewer_id or "Reviewer"
+    content = (
+        f"**{reviewer_label}** {body.decision} review on task **{task.title}**"
+        + (f": {body.note}" if body.note else "")
+    )
+    for aid in plan.agent_ids or []:
+        try:
+            ev = ActivityEvent(
+                agent_id=aid,
+                event_type=event_type,
+                channel="admin",
+                content=content,
+                plan_id=plan_id,
+            )
+            activity_store.insert(ev)
+            runtime.emit_activity(aid, ev)
+        except Exception as exc:
+            logger.warning(f"Failed to emit review activity for agent {aid}: {exc}")
+
+    return updated.model_dump()
 
 
 @router.delete("/api/plans/{plan_id}/tasks/{task_id}")

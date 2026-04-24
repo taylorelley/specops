@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS plan_columns (
     plan_id TEXT NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
     title TEXT NOT NULL DEFAULT '',
     position INTEGER DEFAULT 0,
+    kind TEXT NOT NULL DEFAULT 'standard',
     PRIMARY KEY (id, plan_id)
 );
 
@@ -65,6 +66,11 @@ CREATE TABLE IF NOT EXISTS plan_tasks (
     title TEXT NOT NULL DEFAULT '',
     description TEXT DEFAULT '',
     position INTEGER DEFAULT 0,
+    requires_review INTEGER NOT NULL DEFAULT 1,
+    review_status TEXT,
+    reviewed_by TEXT DEFAULT '',
+    reviewed_at TEXT DEFAULT '',
+    review_note TEXT DEFAULT '',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -209,6 +215,29 @@ class Database:
         plan_cols = {r[1] for r in conn.execute("PRAGMA table_info(plans)").fetchall()}
         if "owner_user_id" not in plan_cols:
             conn.execute("ALTER TABLE plans ADD COLUMN owner_user_id TEXT DEFAULT ''")
+
+        # Add kind to plan_columns (review-gate opt-in); existing rows default to 'standard'.
+        plan_column_cols = {r[1] for r in conn.execute("PRAGMA table_info(plan_columns)").fetchall()}
+        if "kind" not in plan_column_cols:
+            conn.execute(
+                "ALTER TABLE plan_columns ADD COLUMN kind TEXT NOT NULL DEFAULT 'standard'"
+            )
+
+        # Add review tracking fields to plan_tasks; existing rows default to
+        # requires_review=1 so they respect any review column added later.
+        plan_task_cols = {r[1] for r in conn.execute("PRAGMA table_info(plan_tasks)").fetchall()}
+        if "requires_review" not in plan_task_cols:
+            conn.execute(
+                "ALTER TABLE plan_tasks ADD COLUMN requires_review INTEGER NOT NULL DEFAULT 1"
+            )
+        if "review_status" not in plan_task_cols:
+            conn.execute("ALTER TABLE plan_tasks ADD COLUMN review_status TEXT")
+        if "reviewed_by" not in plan_task_cols:
+            conn.execute("ALTER TABLE plan_tasks ADD COLUMN reviewed_by TEXT DEFAULT ''")
+        if "reviewed_at" not in plan_task_cols:
+            conn.execute("ALTER TABLE plan_tasks ADD COLUMN reviewed_at TEXT DEFAULT ''")
+        if "review_note" not in plan_task_cols:
+            conn.execute("ALTER TABLE plan_tasks ADD COLUMN review_note TEXT DEFAULT ''")
         seed_admin = conn.execute(
             "SELECT id FROM users WHERE role = 'admin' ORDER BY created_at LIMIT 1"
         ).fetchone()

@@ -272,9 +272,13 @@ export type WorkspaceFiles = {
   files: string[];
 };
 
+export type ColumnKind = "standard" | "review";
+
 export type PlanTemplateColumn = {
   title: string;
   position?: number | null;
+  /** "review" marks the column as a human-approval gate. Defaults to "standard". */
+  kind?: ColumnKind;
 };
 
 export type PlanTemplateTask = {
@@ -284,7 +288,11 @@ export type PlanTemplateTask = {
   column?: string;
   /** Agent id to preassign this task to. Empty / unknown = task stays unassigned. */
   agent_id?: string;
+  /** Whether this task must pass a human review when in a review column. Defaults true. */
+  requires_review?: boolean;
 };
+
+export type ReviewStatus = "pending" | "approved" | "rejected";
 
 export type PlanTemplate = {
   id: string;
@@ -316,6 +324,11 @@ export type PlanTask = {
   column_id: string;
   agent_id: string;
   position: number;
+  requires_review?: boolean;
+  review_status?: ReviewStatus | null;
+  reviewed_by?: string;
+  reviewed_at?: string;
+  review_note?: string;
   created_at?: string;
   updated_at?: string;
 };
@@ -324,6 +337,7 @@ export type PlanColumn = {
   id: string;
   title: string;
   position: number;
+  kind?: ColumnKind;
 };
 
 export type Plan = {

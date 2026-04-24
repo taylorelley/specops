@@ -332,9 +332,14 @@ class TestCreatePlanFromTemplate:
             "Triage",
             "Investigating",
             "Fix in Progress",
+            "Review",
             "Verified",
         ]
-        # Bundled template seeds at least one task in every column.
+        # The Review column ships as a human-review gate.
+        by_title = {c["title"]: c for c in plan["columns"]}
+        assert by_title["Review"]["kind"] == "review"
+        assert by_title["Triage"]["kind"] == "standard"
+        # Bundled template seeds a task in each non-review column.
         column_by_id = {c["id"]: c["title"] for c in plan["columns"]}
         titles_with_tasks = {column_by_id[t["column_id"]] for t in plan["tasks"]}
         assert titles_with_tasks == {

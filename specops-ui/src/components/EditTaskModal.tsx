@@ -33,7 +33,10 @@ export default function EditTaskModal({
   const [description, setDescription] = useState("");
   const [agentId, setAgentId] = useState("");
   const [columnId, setColumnId] = useState("");
+  const [requiresReview, setRequiresReview] = useState(true);
   const updateTask = useUpdateTask(planId);
+
+  const hasReviewColumn = columns.some((c) => c.kind === "review");
 
   useEffect(() => {
     if (task) {
@@ -41,20 +44,25 @@ export default function EditTaskModal({
       setDescription(task.description ?? "");
       setAgentId(task.agent_id ?? "");
       setColumnId(task.column_id ?? "");
+      setRequiresReview(task.requires_review !== false);
     }
   }, [task]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!task || !title.trim()) return;
+    const payload: Partial<PlanTaskType> = {
+      title: title.trim(),
+      description: description.trim(),
+      agent_id: agentId || undefined,
+      column_id: columnId || task.column_id,
+    };
+    if (hasReviewColumn) {
+      payload.requires_review = requiresReview;
+    }
     await updateTask.mutateAsync({
       taskId: task.id,
-      data: {
-        title: title.trim(),
-        description: description.trim(),
-        agent_id: agentId || undefined,
-        column_id: columnId || task.column_id,
-      },
+      data: payload,
     });
     onClose();
   }
@@ -123,6 +131,22 @@ export default function EditTaskModal({
               ))}
             </select>
           </div>
+        )}
+        {hasReviewColumn && (
+          <label className="flex items-start gap-2 text-sm text-claude-text-secondary">
+            <input
+              type="checkbox"
+              checked={requiresReview}
+              onChange={(e) => setRequiresReview(e.target.checked)}
+              className="mt-0.5"
+            />
+            <span>
+              Require human review before this task can leave a review column.
+              <span className="block text-xs text-claude-text-muted">
+                Uncheck to let this specific task bypass the review gate.
+              </span>
+            </span>
+          </label>
         )}
         <div className="flex justify-end gap-2 pt-2">
           <button

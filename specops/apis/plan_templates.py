@@ -2,6 +2,7 @@
 
 import logging
 import re
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field, field_validator
@@ -22,6 +23,7 @@ _RESERVED_TEMPLATE_IDS = frozenset({"custom"})
 class PlanTemplateColumnModel(BaseModel):
     title: str
     position: int | None = None
+    kind: Literal["standard", "review"] = "standard"
 
 
 class PlanTemplateTaskModel(BaseModel):
@@ -29,6 +31,7 @@ class PlanTemplateTaskModel(BaseModel):
     description: str = ""
     column: str = ""
     agent_id: str = ""
+    requires_review: bool = True
 
 
 class AddPlanTemplateRequest(BaseModel):
