@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { Outlet, NavLink, Link } from "react-router-dom";
-import { IoMoonOutline, IoSunnyOutline } from "react-icons/io5";
+import { IoHomeOutline, IoMoonOutline, IoSunnyOutline } from "react-icons/io5";
 import { useAuth } from "../contexts/AuthContext";
 import { useTheme } from "../contexts/ThemeContext";
 import { SpecialAgentIcon } from "./SpecialAgentIcon";
@@ -37,6 +37,9 @@ export default function Layout() {
         </div>
 
         <nav className="space-y-0.5 px-1.5">
+          <NavLink to="/" end className={linkClass} title="Dashboard">
+            <IoHomeOutline className="h-5 w-5 shrink-0" />
+          </NavLink>
           <NavLink to="/specialagents" className={linkClass} title="Special Agents">
             <SpecialAgentIcon className="h-5 w-5 shrink-0" />
           </NavLink>
