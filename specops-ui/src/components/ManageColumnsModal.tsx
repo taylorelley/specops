@@ -85,28 +85,47 @@ export default function ManageColumnsModal({ open, onClose, plan }: ManageColumn
     const currentOriginalPosition = current.position;
     const otherOriginalPosition = other.position;
 
+    let failedStep: "step1" | "step2" | "step3" | null = null;
+    let failedColumnId = current.id;
+
     try {
       // Step 1: Move current to sentinel position
+      failedStep = "step1";
       await updateColumn.mutateAsync({
         columnId: current.id,
         data: { position: sentinelPosition },
       });
 
       // Step 2: Move other to current's original position
+      failedStep = "step2";
+      failedColumnId = other.id;
       await updateColumn.mutateAsync({
         columnId: other.id,
         data: { position: currentOriginalPosition },
       });
 
       // Step 3: Move current from sentinel to other's original position
+      failedStep = "step3";
+      failedColumnId = current.id;
       await updateColumn.mutateAsync({
         columnId: current.id,
         data: { position: otherOriginalPosition },
       });
     } catch (err) {
-      // Determine which column failed to set appropriate error
+      // Attempt best-effort rollback
+      if (failedStep !== "step1") {
+        try {
+          await updateColumn.mutateAsync({
+            columnId: current.id,
+            data: { position: currentOriginalPosition },
+          });
+        } catch {
+          // Rollback failed, but don't override the original error
+        }
+      }
+
       setRowError({
-        columnId: current.id,
+        columnId: failedColumnId,
         message: err instanceof Error ? err.message : "Failed to reorder column",
       });
     }
