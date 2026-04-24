@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import uuid
 from typing import Awaitable, Callable
 
 from loguru import logger
@@ -64,6 +65,7 @@ class SessionProcessor:
         channel: str = "cli",
         chat_id: str = "direct",
         plan_id: str = "",
+        execution_id: str = "",
     ) -> tuple[str | None, list[str], list[dict]]:
         """
         Run the agent iteration loop.
@@ -74,6 +76,10 @@ class SessionProcessor:
             channel: Channel name (for tool approval prompts).
             chat_id: Chat ID (for tool approval prompts).
             plan_id: Plan ID when in plan context (for tool approval routing).
+            execution_id: Durable-journal execution id for this turn. When
+                present, step boundary events and tool_call/tool_result
+                events are emitted so a fresh worker can resume after a
+                crash without re-executing side-effecting tools.
 
         Returns:
             Tuple of (final_content, list_of_tools_used, turn_messages).
@@ -89,6 +95,18 @@ class SessionProcessor:
 
         while iteration < self._max_iterations:
             iteration += 1
+            step_id = f"step:{iteration - 1}" if execution_id else ""
+
+            if execution_id and self._on_event:
+                await self._on_event(
+                    "step_started",
+                    "",
+                    f"step {iteration - 1}",
+                    plan_id=plan_id,
+                    execution_id=execution_id,
+                    step_id=step_id,
+                    event_kind="step_started",
+                )
 
             all_tool_defs = (
                 self._tools_manager.tools.get_definitions()
@@ -127,7 +145,12 @@ class SessionProcessor:
 
                 if len(tool_calls) == 1:
                     tc_id, result = await self._tools_manager.execute_tool(
-                        tool_calls[0], channel=channel, chat_id=chat_id, plan_id=plan_id
+                        tool_calls[0],
+                        channel=channel,
+                        chat_id=chat_id,
+                        plan_id=plan_id,
+                        execution_id=execution_id,
+                        step_id=step_id,
                     )
                     messages = self._context.add_tool_result(
                         messages, tc_id, tool_calls[0].name, result
@@ -136,15 +159,41 @@ class SessionProcessor:
                     results = await asyncio.gather(
                         *(
                             self._tools_manager.execute_tool(
-                                tc, channel=channel, chat_id=chat_id, plan_id=plan_id
+                                tc,
+                                channel=channel,
+                                chat_id=chat_id,
+                                plan_id=plan_id,
+                                execution_id=execution_id,
+                                step_id=step_id,
                             )
                             for tc in tool_calls
                         )
                     )
                     for tc, (tc_id, result) in zip(tool_calls, results):
                         messages = self._context.add_tool_result(messages, tc_id, tc.name, result)
+
+                if execution_id and self._on_event:
+                    await self._on_event(
+                        "step_completed",
+                        "",
+                        f"step {iteration - 1} done",
+                        plan_id=plan_id,
+                        execution_id=execution_id,
+                        step_id=step_id,
+                        event_kind="step_completed",
+                    )
             else:
                 final_content = strip_think(response.content)
+                if execution_id and self._on_event:
+                    await self._on_event(
+                        "step_completed",
+                        "",
+                        f"step {iteration - 1} final",
+                        plan_id=plan_id,
+                        execution_id=execution_id,
+                        step_id=step_id,
+                        event_kind="step_completed",
+                    )
                 break
 
         # Collect all messages added during this turn (excludes system prompt + prior history).
@@ -156,6 +205,7 @@ class SessionProcessor:
         msg: InboundMessage,
         session_key: str | None = None,
         on_progress: Callable[[str], Awaitable[None]] | None = None,
+        execution_id: str | None = None,
     ) -> OutboundMessage | None:
         """
         Process a single inbound message.
@@ -241,12 +291,33 @@ class SessionProcessor:
                 )
             )
 
+        is_resume = execution_id is not None
+        if not execution_id:
+            execution_id = uuid.uuid4().hex
+        if self._on_event and not is_resume:
+            await self._on_event(
+                "execution_started",
+                msg.channel,
+                f"execution {execution_id[:12]} for {msg.channel}:{msg.chat_id}",
+                plan_id=_plan_id,
+                execution_id=execution_id,
+                event_kind="execution_started",
+                payload_json=json.dumps(
+                    {
+                        "channel": msg.channel,
+                        "chat_id": msg.chat_id,
+                        "session_key": key,
+                    }
+                ),
+            )
+
         final_content, tools_used, turn_messages = await self.run_agent_loop(
             initial_messages,
             on_progress=on_progress or _bus_progress,
             channel=msg.channel,
             chat_id=msg.chat_id,
             plan_id=_plan_id,
+            execution_id=execution_id,
         )
 
         if final_content is None:
@@ -313,11 +384,29 @@ class SessionProcessor:
             else None,
             model=self._model,
         )
+        execution_id = uuid.uuid4().hex
+        if self._on_event:
+            await self._on_event(
+                "execution_started",
+                origin_channel,
+                f"execution {execution_id[:12]} for {origin_channel}:{origin_chat_id}",
+                plan_id=_plan_id,
+                execution_id=execution_id,
+                event_kind="execution_started",
+                payload_json=json.dumps(
+                    {
+                        "channel": origin_channel,
+                        "chat_id": origin_chat_id,
+                        "session_key": session_key,
+                    }
+                ),
+            )
         final_content, _, turn_messages = await self.run_agent_loop(
             initial_messages,
             channel=origin_channel,
             chat_id=origin_chat_id,
             plan_id=_plan_id,
+            execution_id=execution_id,
         )
 
         if final_content is None:
@@ -341,6 +430,7 @@ class SessionProcessor:
         channel: str = "cli",
         chat_id: str = "direct",
         on_progress: Callable[[str], Awaitable[None]] | None = None,
+        execution_id: str | None = None,
     ) -> str:
         """
         Process a message directly (for CLI or cron usage).
@@ -359,7 +449,12 @@ class SessionProcessor:
         await self._mcp_manager.await_connected()
         msg = InboundMessage(channel=channel, sender_id="user", chat_id=chat_id, content=content)
 
-        response = await self.process_message(msg, session_key=session_key, on_progress=on_progress)
+        response = await self.process_message(
+            msg,
+            session_key=session_key,
+            on_progress=on_progress,
+            execution_id=execution_id,
+        )
         if response:
             await self._bus.publish_outbound(response)
         return response.content if response else ""

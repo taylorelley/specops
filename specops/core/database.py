@@ -186,6 +186,55 @@ CREATE TABLE IF NOT EXISTS plan_shares (
 );
 
 CREATE INDEX IF NOT EXISTS idx_plan_shares_user_id ON plan_shares(user_id);
+
+-- Executions: one row per inbound message handled by an agent. The
+-- worker creates this on receipt; status flips to 'paused' on HITL,
+-- 'failed' on error, 'completed' once the assistant reply ships.
+CREATE TABLE IF NOT EXISTS executions (
+    id TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL,
+    plan_id TEXT NOT NULL DEFAULT '',
+    session_key TEXT NOT NULL DEFAULT '',
+    channel TEXT NOT NULL DEFAULT '',
+    chat_id TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'running',
+    last_step_id TEXT NOT NULL DEFAULT '',
+    error_message TEXT NOT NULL DEFAULT '',
+    pending_resume INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    paused_at TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_executions_agent ON executions(agent_id, status);
+CREATE INDEX IF NOT EXISTS idx_executions_session ON executions(agent_id, session_key);
+
+-- Execution events: durable journal. Authoritative source for resume.
+-- INSERT OR IGNORE on event_id deduplicates worker pushes after
+-- reconnect (mirrors the activity_events pattern).
+CREATE TABLE IF NOT EXISTS execution_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    execution_id TEXT NOT NULL,
+    event_id TEXT NOT NULL UNIQUE,
+    step_id TEXT NOT NULL DEFAULT '',
+    event_kind TEXT NOT NULL,
+    replay_safety TEXT,
+    idempotency_key TEXT,
+    tool_name TEXT,
+    result_status TEXT,
+    duration_ms INTEGER,
+    payload_json TEXT,
+    timestamp TEXT NOT NULL,
+    agent_id TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_execev_exec ON execution_events(execution_id, id);
+-- Non-unique: tool_call and tool_result share an idempotency_key by design;
+-- de-duplication is enforced via event_id UNIQUE.
+CREATE INDEX IF NOT EXISTS idx_execev_idem
+    ON execution_events(execution_id, idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
 """
 
 

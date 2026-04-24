@@ -28,7 +28,14 @@ _LOG_KEEP_ROTATED = 2  # keep activity.1.jsonl and activity.2.jsonl
 
 @dataclass
 class ActivityEvent:
-    """Single activity event for an agent (message, tool call, etc.)."""
+    """Single activity event for an agent (message, tool call, etc.).
+
+    Journal-mode events additionally carry ``execution_id`` / ``step_id``
+    / ``event_kind`` / ``replay_safety`` / ``idempotency_key`` /
+    ``payload_json``. The control plane routes events with
+    ``execution_id`` set to the ``execution_events`` table for durable
+    replay, in addition to the existing ``activity_events`` audit log.
+    """
 
     agent_id: str
     event_type: str
@@ -41,6 +48,12 @@ class ActivityEvent:
     result_status: str | None = None  # "ok" | "error"
     duration_ms: int | None = None
     event_id: str | None = None  # Unique id for deduplication (reconnect-safe)
+    execution_id: str | None = None
+    step_id: str | None = None
+    event_kind: str | None = None
+    replay_safety: str | None = None
+    idempotency_key: str | None = None
+    payload_json: str | None = None
 
 
 class ActivityLog:
@@ -101,6 +114,18 @@ class ActivityLog:
                 out["duration_ms"] = event.duration_ms
             if event.event_id is not None:
                 out["event_id"] = event.event_id
+            if event.execution_id is not None:
+                out["execution_id"] = event.execution_id
+            if event.step_id is not None:
+                out["step_id"] = event.step_id
+            if event.event_kind is not None:
+                out["event_kind"] = event.event_kind
+            if event.replay_safety is not None:
+                out["replay_safety"] = event.replay_safety
+            if event.idempotency_key is not None:
+                out["idempotency_key"] = event.idempotency_key
+            if event.payload_json is not None:
+                out["payload_json"] = event.payload_json
             with open(path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(out, ensure_ascii=False) + "\n")
         except Exception:

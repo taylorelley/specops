@@ -32,7 +32,10 @@ export default defineConfig({
       "/reference/": [
         {
           text: "Reference",
-          items: [{ text: "Terminology", link: "/reference/terminology" }],
+          items: [
+            { text: "Terminology", link: "/reference/terminology" },
+            { text: "Execution events", link: "/reference/execution-events" },
+          ],
         },
       ],
     },

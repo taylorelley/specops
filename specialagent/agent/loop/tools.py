@@ -29,6 +29,11 @@ from specialagent.agent.tools.web import WebFetchTool, WebSearchTool
 from specialagent.providers.base import ToolCallRequest
 from specops_lib.bus import InboundMessage, MessageBus
 from specops_lib.config.schema import ExecToolConfig, WebSearchConfig
+from specops_lib.execution import (
+    JournalLookup,
+    NullJournal,
+    derive_idempotency_key,
+)
 
 
 class ToolsManager:
@@ -53,6 +58,7 @@ class ToolsManager:
         agent_id: str = "",
         cron_service=None,
         on_event=None,
+        journal_lookup: JournalLookup | None = None,
     ) -> None:
         self.tools = tools
         self.mcp = mcp
@@ -71,6 +77,7 @@ class ToolsManager:
         self._agent_id = agent_id
         self._cron_service = cron_service
         self._on_event = on_event
+        self._journal: JournalLookup = journal_lookup or NullJournal()
 
     def register_default_tools(self) -> None:
         """Register the default set of tools."""
@@ -140,11 +147,20 @@ class ToolsManager:
         channel: str,
         chat_id: str,
         plan_id: str = "",
+        execution_id: str = "",
+        step_id: str = "",
     ) -> tuple[str, str]:
-        """Execute a single tool call with logging and truncation.
+        """Execute a single tool call with logging, journal, and truncation.
 
-        If tool approval is ask_before_run, prompts the user in-channel and waits for approval.
-        Returns (tool_call_id, result_text).
+        Approval gate: if approval is ``ask_before_run``, prompts the user
+        in-channel and waits for approval.
+
+        Journal: when ``execution_id`` is provided and the tool is
+        ``checkpoint`` or ``skip`` replay-safety, the prior journal is
+        consulted before executing. A previously completed call short-
+        circuits to the cached result; an interrupted call (tool_call
+        with no tool_result) returns a synthetic message rather than
+        re-executing a side-effecting tool.
         """
         mode = self._approval.get_mode(tool_call.name)
         if mode == "ask_before_run":
@@ -169,7 +185,45 @@ class ToolsManager:
                     "Ask the user if they want you to try again.",
                 )
 
+        tool_obj = self.tools.get(tool_call.name) or self.mcp.get(tool_call.name)
+        replay_safety = (
+            getattr(tool_obj, "replay_safety", "checkpoint") if tool_obj else "checkpoint"
+        )
+        idem_key: str | None = None
+        if execution_id:
+            override = tool_obj.compute_idempotency_key(tool_call.arguments) if tool_obj else None
+            idem_key = override or derive_idempotency_key(
+                execution_id, step_id or "step:0", tool_call.name, tool_call.arguments
+            )
+
         args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
+
+        if execution_id and idem_key and replay_safety in ("checkpoint", "skip"):
+            prior_result = await self._journal.find_tool_result(execution_id, idem_key)
+            if prior_result and (prior_result.get("result_status") == "ok"):
+                cached = prior_result.get("payload_json") or prior_result.get("content") or ""
+                logger.info(
+                    "[journal] Reusing prior tool_result for tool={}, exec={}, idem={}",
+                    tool_call.name,
+                    execution_id,
+                    idem_key[:12],
+                )
+                return tool_call.id, cached
+            prior_call = await self._journal.find_tool_call(execution_id, idem_key)
+            if prior_call and not prior_result:
+                if replay_safety == "skip":
+                    msg = (
+                        f"[RESUME UNSAFE] '{tool_call.name}' was started in a prior execution "
+                        "but did not complete. Resume cannot continue safely; aborting this step."
+                    )
+                    return tool_call.id, msg
+                msg = (
+                    f"[INTERRUPTED] A prior call to '{tool_call.name}' with the same arguments "
+                    "was started but never confirmed complete. Treat the side effects as "
+                    "unknown and decide whether to ask the user before retrying."
+                )
+                return tool_call.id, msg
+
         logger.info("Tool call: {}({})", tool_call.name, args_str[:200])
         start = time.perf_counter()
         result_status = "ok"
@@ -182,6 +236,11 @@ class ToolsManager:
                 tool_name=tool_call.name,
                 tool_args_redacted=redact_tool_args(tool_call.arguments),
                 plan_id=plan_id,
+                execution_id=execution_id or None,
+                step_id=step_id or None,
+                event_kind="tool_call" if execution_id else None,
+                replay_safety=replay_safety if execution_id else None,
+                idempotency_key=idem_key,
             )
 
         try:
@@ -205,5 +264,11 @@ class ToolsManager:
                 result_status=result_status,
                 duration_ms=duration_ms,
                 plan_id=plan_id,
+                execution_id=execution_id or None,
+                step_id=step_id or None,
+                event_kind="tool_result" if execution_id else None,
+                replay_safety=replay_safety if execution_id else None,
+                idempotency_key=idem_key,
+                payload_json=result if execution_id else None,
             )
         return tool_call.id, result

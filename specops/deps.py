@@ -14,6 +14,8 @@ from specops.core.store import AgentStore, PlanStore, ShareStore, Store, UserSto
 from specops.core.store.activity_events import ActivityEventsStore
 from specops.core.store.agent_config import AgentConfigStore
 from specops.core.store.agent_variables import AgentVariablesStore
+from specops.core.store.execution_events import ExecutionEventsStore
+from specops.core.store.executions import ExecutionsStore
 from specops.core.store.llm_providers import LLMProviderStore
 from specops.core.store.plan_artifacts import PlanArtifactStore
 from specops.core.store.process_logs import ProcessLogStore
@@ -137,6 +139,14 @@ def get_run_store(request: Request) -> RunStore:
 
 def get_activity_events_store(request: Request) -> ActivityEventsStore:
     return request.app.state.activity_events_store
+
+
+def get_executions_store(request: Request) -> ExecutionsStore:
+    return request.app.state.executions_store
+
+
+def get_execution_events_store(request: Request) -> ExecutionEventsStore:
+    return request.app.state.execution_events_store
 
 
 def get_process_log_store(request: Request) -> ProcessLogStore:

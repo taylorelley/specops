@@ -30,6 +30,7 @@ from specops_lib.config.schema import (
     ToolApprovalConfig,
     ToolsConfig,
 )
+from specops_lib.execution import JournalLookup, LocalJournalLookup
 
 
 class AgentLoop:
@@ -62,6 +63,7 @@ class AgentLoop:
         session_manager: SessionManager | None = None,
         software_management: SoftwareManagement | None = None,
         on_event: Callable[..., Awaitable[None]] | None = None,
+        journal_lookup: JournalLookup | None = None,
     ):
         self._file_service = file_service
         self.workspace = file_service.workspace_path
@@ -126,6 +128,10 @@ class AgentLoop:
             initial_servers=dict(tools.mcp_servers) if tools.mcp_servers else None,
         )
 
+        self._journal_lookup: JournalLookup = journal_lookup or LocalJournalLookup(
+            self._file_service.logs_path
+        )
+
         self._tools_manager = ToolsManager(
             tools=self.tools,
             mcp=self.mcp,
@@ -144,6 +150,7 @@ class AgentLoop:
             agent_id=self._agent_id,
             cron_service=cron_service,
             on_event=on_event,
+            journal_lookup=self._journal_lookup,
         )
         self._tools_manager.register_default_tools()
 
@@ -257,6 +264,7 @@ class AgentLoop:
         channel: str = "cli",
         chat_id: str = "direct",
         on_progress=None,
+        execution_id: str | None = None,
     ) -> str:
         """Process a message directly (delegates to SessionProcessor)."""
         return await self._session_processor.process_direct(
@@ -265,6 +273,7 @@ class AgentLoop:
             channel=channel,
             chat_id=chat_id,
             on_progress=on_progress,
+            execution_id=execution_id,
         )
 
     # ── Main loop ─────────────────────────────────────────────────────────────

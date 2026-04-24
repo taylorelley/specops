@@ -64,6 +64,12 @@ def _read_activity_jsonl(logs_path: Path) -> list[ActivityEvent]:
                     result_status=data.get("result_status"),
                     duration_ms=data.get("duration_ms"),
                     event_id=data.get("event_id"),
+                    execution_id=data.get("execution_id"),
+                    step_id=data.get("step_id"),
+                    event_kind=data.get("event_kind"),
+                    replay_safety=data.get("replay_safety"),
+                    idempotency_key=data.get("idempotency_key"),
+                    payload_json=data.get("payload_json"),
                 )
                 if ev.event_id is None:
                     ev.event_id = uuid.uuid4().hex
@@ -227,6 +233,18 @@ class AdminClient:
                 entry["duration_ms"] = e.duration_ms
             if e.event_id is not None:
                 entry["event_id"] = e.event_id
+            if e.execution_id is not None:
+                entry["execution_id"] = e.execution_id
+            if e.step_id is not None:
+                entry["step_id"] = e.step_id
+            if e.event_kind is not None:
+                entry["event_kind"] = e.event_kind
+            if e.replay_safety is not None:
+                entry["replay_safety"] = e.replay_safety
+            if e.idempotency_key is not None:
+                entry["idempotency_key"] = e.idempotency_key
+            if e.payload_json is not None:
+                entry["payload_json"] = e.payload_json
             batch.append(entry)
         await w.send(json.dumps({"type": "activity", "events": batch}))
 
@@ -301,6 +319,24 @@ class AdminClient:
                     session_key = data.get("session_key") or f"acp:{run_id}"
                     logger.info(f"ACP run received: run_id={run_id}")
                     asyncio.create_task(self._handle_acp_run(run_id, text, session_key))
+                elif msg_type == "resume":
+                    if not self._ctx:
+                        continue
+                    execution_id = data.get("execution_id", "")
+                    text = data.get("text", "")
+                    channel = data.get("channel", "cli")
+                    chat_id = data.get("chat_id", "direct")
+                    session_key = data.get("session_key") or f"{channel}:{chat_id}"
+                    logger.info(f"Resume received: execution_id={execution_id}, channel={channel}")
+                    asyncio.create_task(
+                        self._ctx.agent_loop.process_direct(
+                            text,
+                            session_key=session_key,
+                            channel=channel,
+                            chat_id=chat_id,
+                            execution_id=execution_id,
+                        )
+                    )
                 elif msg_type == "request" and self._ctx:
                     asyncio.create_task(self._handle_request(ws, data))
         except (asyncio.CancelledError, websockets.exceptions.ConnectionClosed):

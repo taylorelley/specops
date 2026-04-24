@@ -95,6 +95,8 @@ class _PlanToolBase(Tool):
 class ListPlansTool(_PlanToolBase):
     """List all plans visible to this agent."""
 
+    replay_safety = "safe"
+
     @property
     def name(self) -> str:
         return "list_plans"
@@ -134,6 +136,8 @@ class ListPlansTool(_PlanToolBase):
 
 class PlanQueryTool(_PlanToolBase):
     """Query plans and tasks with filters — find tasks assigned to me, by status, etc."""
+
+    replay_safety = "safe"
 
     def __init__(self, admin_base_url: str, agent_token: str, agent_id: str) -> None:
         super().__init__(admin_base_url, agent_token)
@@ -300,6 +304,8 @@ class PlanQueryTool(_PlanToolBase):
 
 class GetPlanTool(_PlanToolBase):
     """Get full details of a plan including all columns, tasks, and agent assignments."""
+
+    replay_safety = "safe"
 
     @property
     def name(self) -> str:
@@ -879,6 +885,8 @@ class AddPlanArtifactTool(_PlanToolBase):
 class ListPlanArtifactsTool(_PlanToolBase):
     """List all artifacts in a plan, optionally filtered by task."""
 
+    replay_safety = "safe"
+
     @property
     def name(self) -> str:
         return "list_plan_artifacts"
@@ -945,6 +953,8 @@ class ListPlanArtifactsTool(_PlanToolBase):
 
 class GetPlanArtifactTool(_PlanToolBase):
     """Get/download a plan artifact's content."""
+
+    replay_safety = "safe"
 
     @property
     def name(self) -> str:
@@ -1116,6 +1126,8 @@ class AddTaskCommentTool(_PlanToolBase):
 class ListTaskCommentsTool(_PlanToolBase):
     """List comments on a plan task."""
 
+    replay_safety = "safe"
+
     @property
     def name(self) -> str:
         return "list_task_comments"
@@ -1168,6 +1180,8 @@ class ListTaskCommentsTool(_PlanToolBase):
 
 class ListPlanAssigneesTool(_PlanToolBase):
     """List all agents available to work on a plan (for task assignment)."""
+
+    replay_safety = "safe"
 
     @property
     def name(self) -> str:
