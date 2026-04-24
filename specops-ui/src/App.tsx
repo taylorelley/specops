@@ -2,6 +2,7 @@ import { Routes, Route, Navigate } from "react-router-dom";
 import { useAuth } from "./contexts/AuthContext";
 import Layout from "./components/Layout";
 import Login from "./pages/Login";
+import Dashboard from "./pages/Dashboard";
 import SpecialAgentsList from "./pages/SpecialAgentsList";
 import PlansList from "./pages/PlansList";
 import PlanBoard from "./pages/PlanBoard";
@@ -31,7 +32,7 @@ export default function App() {
           </Protected>
         }
       >
-        <Route index element={<Navigate to="/specialagents" replace />} />
+        <Route index element={<Dashboard />} />
         <Route path="specialagents" element={<SpecialAgentsList />} />
         <Route path="plans" element={<PlansList />} />
         <Route path="plans/:planId" element={<PlanBoard />} />
