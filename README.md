@@ -342,6 +342,18 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines.
 
 ---
 
+## Credits & Attribution
+
+SpecOps is a derivative work of [Clawforce](https://github.com/saolalab/clawforce)
+by Hung Tran, also licensed under the Apache License 2.0. Files carried over
+from Clawforce have been modified; see [CHANGELOG.md](CHANGELOG.md) and the
+git history for details.
+
+See [NOTICE](NOTICE) for the full attribution statement required by the
+Apache License, Section 4.
+
+---
+
 ## License
 
 Apache License 2.0 — see [LICENSE](LICENSE) for details.

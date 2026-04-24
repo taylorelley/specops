@@ -1,0 +1,33 @@
+SpecOps
+Copyright 2025 Taylor Elley and SpecOps contributors
+
+This product includes software originally developed as part of the Clawforce
+project:
+
+    Clawforce
+    Copyright 2025 Hung Tran
+    https://github.com/saolalab/clawforce
+
+The Clawforce project is licensed under the Apache License, Version 2.0 (the
+"License"); you may not use this work except in compliance with the License.
+A copy of the License is included in the LICENSE file distributed with this
+project and may also be obtained at:
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+------------------------------------------------------------------------------
+Modifications
+------------------------------------------------------------------------------
+
+SpecOps is a derivative work of Clawforce. Files carried over from Clawforce
+have been modified from their original form. Notable project-wide changes
+include, but are not limited to:
+
+  * Rebrand from Clawforce / Clawbot / clawlib to SpecOps / SpecialAgent /
+    specops_lib (Python distributions, imports, CLI commands, environment
+    variable prefixes, Docker images, UI routes, components, and hooks).
+  * Addition of plan templates, human-review gates on plan tasks, a user
+    dashboard, dark mode, CI pipeline, and reverse-proxy deployment docs.
+
+A more complete, commit-level history of modifications is available in
+CHANGELOG.md and in the project's git log.
