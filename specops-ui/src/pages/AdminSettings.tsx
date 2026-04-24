@@ -59,6 +59,13 @@ function ProviderFormModal({
 
   const selectedType = types.find((t) => t.name === type);
   const needsApiBase = !!(selectedType?.requires_api_base);
+  const showApiBase = needsApiBase;
+
+  // Clear apiBase whenever the selected type no longer exposes the field so a
+  // stale URL can't leak into the payload after switching types.
+  useEffect(() => {
+    if (!showApiBase) setApiBase("");
+  }, [showApiBase]);
 
   async function handleSubmit() {
     setErr("");
@@ -74,12 +81,16 @@ function ProviderFormModal({
     if (extraHeadersRaw.trim()) {
       try {
         const parsed = JSON.parse(extraHeadersRaw);
-        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-          extraHeaders = parsed as Record<string, string>;
-        } else {
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
           setErr("Extra headers must be a JSON object");
           return;
         }
+        const entries = Object.entries(parsed as Record<string, unknown>);
+        if (entries.some(([, v]) => typeof v !== "string")) {
+          setErr("Extra headers values must be strings");
+          return;
+        }
+        extraHeaders = Object.fromEntries(entries) as Record<string, string>;
       } catch {
         setErr("Extra headers is not valid JSON");
         return;
@@ -91,7 +102,7 @@ function ProviderFormModal({
         name: name.trim(),
         type,
         api_key: apiKey,
-        api_base: apiBase.trim(),
+        api_base: showApiBase ? apiBase.trim() : "",
         extra_headers: extraHeaders,
       });
       onClose();
@@ -147,7 +158,7 @@ function ProviderFormModal({
             disabled={busy}
           />
         </div>
-        {(needsApiBase || type === "custom") && (
+        {showApiBase && (
           <div>
             <label className="mb-1 block text-xs font-medium text-claude-text-muted">Base URL</label>
             <Input
@@ -225,13 +236,7 @@ function ProvidersTab() {
       await api.admin.llmProviders.delete(p.id);
       await load();
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "Delete failed";
-      // Surface 409 with referencing agents nicely
-      if (msg.includes("referenced")) {
-        setError(msg);
-      } else {
-        setError(msg);
-      }
+      setError(e instanceof Error ? e.message : "Delete failed");
     }
   }
 

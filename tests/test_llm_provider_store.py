@@ -3,7 +3,7 @@
 from pathlib import Path
 
 import pytest
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
 
 from specops.core.database import Database
 from specops.core.store.llm_providers import LLMProviderStore
@@ -107,5 +107,5 @@ class TestEncryption:
         a = LLMProviderStore(db, fernet=Fernet(Fernet.generate_key()))
         row = a.create(name="A", type="openai", api_key="sk")
         b = LLMProviderStore(db, fernet=Fernet(Fernet.generate_key()))
-        with pytest.raises(Exception):
+        with pytest.raises(InvalidToken):
             b.get(row["id"], with_secrets=True)

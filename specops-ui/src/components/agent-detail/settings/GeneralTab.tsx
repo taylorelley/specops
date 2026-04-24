@@ -6,7 +6,7 @@ import { detectProvider, fmtPresetValue, heartbeatScheduleToOption } from "../ut
 import { Section, Toggle } from "../ui/Section";
 import { ModelProviderSection } from "./ModelProviderSection";
 import { SecurityPresetCard } from "./SecurityPresetCard";
-import type { Agent } from "../types";
+import type { Agent, ProviderConfigSlot, ProviderValue } from "../types";
 
 type DockerLevel = "permissive" | "sandboxed" | "privileged";
 
@@ -234,7 +234,7 @@ export function GeneralTab({ agentId, agent, update, updateTools }: { agentId: s
                 savedProviders={agent.providers as Record<string, unknown> | undefined}
                 onModelChange={(v) => update({ model: v })}
                 onProviderChange={(provider, patch) => {
-                  const nextProviders: Record<string, unknown> = { ...(agent.providers ?? {}) };
+                  const nextProviders: Record<string, ProviderValue> = { ...(agent.providers ?? {}) };
                   if (patch.providerRef === null) {
                     delete nextProviders.provider_ref;
                     delete nextProviders.providerRef;
@@ -243,8 +243,10 @@ export function GeneralTab({ agentId, agent, update, updateTools }: { agentId: s
                     delete nextProviders.providerRef;
                   }
                   if (provider && (patch.apiKey !== undefined || patch.apiBase !== undefined)) {
-                    const existing = (nextProviders[provider] as Record<string, unknown> | undefined) ?? {};
-                    const merged: Record<string, unknown> = { ...existing };
+                    const existingVal = nextProviders[provider];
+                    const existing: ProviderConfigSlot =
+                      existingVal && typeof existingVal === "object" ? existingVal : {};
+                    const merged: ProviderConfigSlot = { ...existing };
                     if (patch.apiKey !== undefined) merged.apiKey = patch.apiKey;
                     if (patch.apiBase !== undefined) merged.apiBase = patch.apiBase;
                     nextProviders[provider] = merged;

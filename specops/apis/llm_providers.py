@@ -6,6 +6,8 @@ Admin-only CRUD for provider credentials that agents reference by id via
 a dropdown without leaking secrets.
 """
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
@@ -16,6 +18,8 @@ from specops.core.database import get_database
 from specops.core.store.agent_config import AgentConfigStore
 from specops.core.store.llm_providers import LLMProviderStore
 from specops.deps import get_fernet, get_llm_provider_store
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["llm-providers"])
 
@@ -153,7 +157,18 @@ def update_provider(
     current: dict = Depends(get_current_user),
     store: LLMProviderStore = Depends(get_llm_provider_store),
 ):
+    """Patch a provider row.
+
+    Note: changing ``api_key`` / ``api_base`` / ``extra_headers`` does not
+    hot-reload credentials for agents already running. The new values take
+    effect the next time the agent connects (WebSocket ``get_config``) or when
+    the agent's config is pushed via ``PUT /api/agents/{id}/config``.
+    """
     _require_admin(current)
+    if body.name is not None and not body.name.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="name must not be empty"
+        )
     if body.type is not None:
         type_names = {t.name for t in _non_oauth_types()}
         if body.type not in type_names:
@@ -184,18 +199,26 @@ def delete_provider(
     store: LLMProviderStore = Depends(get_llm_provider_store),
 ):
     _require_admin(current)
-    if not store.get(provider_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Provider not found")
-    referencing = _agents_referencing(provider_id)
-    if referencing:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "message": "Provider is referenced by one or more agents",
-                "agent_ids": referencing,
-            },
-        )
-    store.delete(provider_id)
+    # Hold a single DB connection for the reference scan + delete so another
+    # admin cannot race in a new agent_config write between the two steps.
+    db = get_database()
+    with db.connection() as conn:
+        row = conn.execute("SELECT 1 FROM llm_providers WHERE id = ?", (provider_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Provider not found")
+        referencing = _scan_agents_referencing(conn, provider_id)
+        if referencing:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "message": "Provider is referenced by one or more agents",
+                    "agent_ids": referencing,
+                },
+            )
+        conn.execute("DELETE FROM llm_providers WHERE id = ?", (provider_id,))
+    # ``store`` parameter is kept so permission injection happens through the
+    # same dep as the other endpoints; deletion itself ran in the conn above.
+    _ = store
     return {"ok": True}
 
 
@@ -208,24 +231,30 @@ def list_providers_public(
     return [LLMProviderPublic(**row) for row in store.list_public()]
 
 
-def _agents_referencing(provider_id: str) -> list[str]:
-    """Return agent IDs whose persisted config references this provider row.
+def _scan_agents_referencing(conn, provider_id: str) -> list[str]:
+    """Return agent IDs whose persisted config references ``provider_id``.
 
-    Scans each agent_config row — acceptable for small deployments; if it ever
-    becomes hot, we can add a secondary column or index.
+    Runs inside an existing DB connection (so callers can keep check + delete
+    atomic). If a row cannot be decrypted/parsed, the agent is added to the
+    returned list so the delete is *blocked* — admins should resolve the broken
+    row before we silently strand an agent on a deleted provider.
     """
     db = get_database()
     out: list[str] = []
-    with db.connection() as conn:
-        rows = conn.execute("SELECT agent_id, config_json FROM agent_config").fetchall()
-    # Fernet-encrypted blobs won't contain the id literally — we rely on the
-    # store to decrypt. Reuse the shared Fernet instance via deps.
+    rows = conn.execute("SELECT agent_id, config_json FROM agent_config").fetchall()
+    # Reuse the shared Fernet instance via deps so decryption matches writes.
     cfg_store = AgentConfigStore(db, fernet=get_fernet())
     for row in rows:
         agent_id = row["agent_id"]
         try:
             cfg = cfg_store.get_config(agent_id) or {}
-        except Exception:  # noqa: BLE001 — one broken row shouldn't block delete
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Could not read agent_config for %s while scanning provider references: %s",
+                agent_id,
+                exc,
+            )
+            out.append(agent_id)
             continue
         providers = cfg.get("providers") or {}
         if not isinstance(providers, dict):

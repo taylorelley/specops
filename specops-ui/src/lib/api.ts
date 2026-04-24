@@ -87,6 +87,47 @@ function patch<T = void>(path: string, body: unknown): Promise<T> {
   });
 }
 
+export type LlmProviderSummary = {
+  id: string;
+  name: string;
+  type: string;
+};
+
+export type LlmProviderType = {
+  name: string;
+  display_name: string;
+  is_gateway: boolean;
+  is_local: boolean;
+  requires_api_base: boolean;
+};
+
+export type LlmProviderAdminRow = {
+  id: string;
+  name: string;
+  type: string;
+  api_key: string;
+  api_base: string;
+  extra_headers: Record<string, string> | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type LlmProviderCreatePayload = {
+  name: string;
+  type: string;
+  api_key: string;
+  api_base?: string;
+  extra_headers?: Record<string, string> | null;
+};
+
+export type LlmProviderUpdatePayload = {
+  name?: string;
+  type?: string;
+  api_key?: string;
+  api_base?: string;
+  extra_headers?: Record<string, string> | null;
+};
+
 export type RuntimeBackendOption = { value: string; label: string };
 
 export type DockerPreset = Record<string, unknown>;
@@ -445,8 +486,7 @@ export const api = {
       ),
   },
   llmProviders: {
-    list: () =>
-      request<{ id: string; name: string; type: string }[]>("/llm-providers"),
+    list: () => request<LlmProviderSummary[]>("/llm-providers"),
   },
   admin: {
     getSettings: () =>
@@ -454,58 +494,15 @@ export const api = {
     updateSettings: (settings: Record<string, any>) =>
       put<Record<string, any>>("/admin/settings", settings),
     llmProviders: {
-      listTypes: () =>
-        request<{ name: string; display_name: string; is_gateway: boolean; is_local: boolean; requires_api_base: boolean }[]>(
-          "/admin/llm-providers/types",
+      listTypes: () => request<LlmProviderType[]>("/admin/llm-providers/types"),
+      list: () => request<LlmProviderAdminRow[]>("/admin/llm-providers"),
+      create: (data: LlmProviderCreatePayload) =>
+        post<LlmProviderAdminRow>("/admin/llm-providers", data),
+      update: (id: string, data: LlmProviderUpdatePayload) =>
+        patch<LlmProviderAdminRow>(
+          `/admin/llm-providers/${encodeURIComponent(id)}`,
+          data,
         ),
-      list: () =>
-        request<{
-          id: string;
-          name: string;
-          type: string;
-          api_key: string;
-          api_base: string;
-          extra_headers: Record<string, string> | null;
-          created_at: string;
-          updated_at: string;
-        }[]>("/admin/llm-providers"),
-      create: (data: {
-        name: string;
-        type: string;
-        api_key: string;
-        api_base?: string;
-        extra_headers?: Record<string, string> | null;
-      }) =>
-        post<{
-          id: string;
-          name: string;
-          type: string;
-          api_key: string;
-          api_base: string;
-          extra_headers: Record<string, string> | null;
-          created_at: string;
-          updated_at: string;
-        }>("/admin/llm-providers", data),
-      update: (
-        id: string,
-        data: {
-          name?: string;
-          type?: string;
-          api_key?: string;
-          api_base?: string;
-          extra_headers?: Record<string, string> | null;
-        },
-      ) =>
-        patch<{
-          id: string;
-          name: string;
-          type: string;
-          api_key: string;
-          api_base: string;
-          extra_headers: Record<string, string> | null;
-          created_at: string;
-          updated_at: string;
-        }>(`/admin/llm-providers/${encodeURIComponent(id)}`, data),
       delete: (id: string) =>
         request<{ ok: boolean }>(`/admin/llm-providers/${encodeURIComponent(id)}`, {
           method: "DELETE",

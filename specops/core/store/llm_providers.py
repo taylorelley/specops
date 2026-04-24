@@ -9,15 +9,13 @@ is set (same Fernet pattern as ``AgentConfigStore`` / ``AgentVariablesStore``).
 from __future__ import annotations
 
 import json
-import logging
+import sqlite3
 import uuid
 from datetime import datetime, timezone
 
 from cryptography.fernet import Fernet
 
 from specops.core.database import Database
-
-logger = logging.getLogger(__name__)
 
 
 def _redact_key(value: str) -> str:
@@ -27,7 +25,13 @@ def _redact_key(value: str) -> str:
 
 
 class LLMProviderStore:
-    """CRUD for centrally-managed LLM provider credentials in SQLite."""
+    """CRUD for centrally-managed LLM provider credentials in SQLite.
+
+    Note: this store deliberately does not inherit ``BaseRepository[T]`` — it
+    stores an encrypted JSON blob, not a single Pydantic model per column, so
+    the generic CRUD helpers in ``BaseRepository`` don't apply. It mirrors the
+    pattern used by ``AgentConfigStore`` and ``AgentVariablesStore``.
+    """
 
     def __init__(self, db: Database, fernet: Fernet | None = None) -> None:
         self._db = db
@@ -114,11 +118,6 @@ class LLMProviderStore:
             "extra_headers": extra_headers or None,
         }
 
-        if not self._fernet:
-            logger.warning(
-                "SECRETS_MASTER_KEY not set; storing llm_providers as plain JSON (dev mode)"
-            )
-
         blob = self._encrypt_blob(json.dumps(cfg))
         try:
             with self._db.connection() as conn:
@@ -127,10 +126,8 @@ class LLMProviderStore:
                     "VALUES (?, ?, ?, ?, ?, ?)",
                     (provider_id, name, type, blob, now, now),
                 )
-        except Exception as exc:  # sqlite IntegrityError on unique name
-            if "UNIQUE" in str(exc):
-                raise ValueError(f"Provider name '{name}' already exists") from exc
-            raise
+        except sqlite3.IntegrityError as exc:
+            raise ValueError(f"Provider name '{name}' already exists") from exc
         return self.get(provider_id, with_secrets=False) or {}
 
     def update(
@@ -177,10 +174,8 @@ class LLMProviderStore:
                     "WHERE id = ?",
                     (new_name, new_type, blob, now, provider_id),
                 )
-        except Exception as exc:
-            if "UNIQUE" in str(exc):
-                raise ValueError(f"Provider name '{new_name}' already exists") from exc
-            raise
+        except sqlite3.IntegrityError as exc:
+            raise ValueError(f"Provider name '{new_name}' already exists") from exc
         return self.get(provider_id, with_secrets=False)
 
     def delete(self, provider_id: str) -> bool:

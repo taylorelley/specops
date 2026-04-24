@@ -77,6 +77,19 @@ export type SecurityCfg = {
   docker?: { level?: "permissive" | "sandboxed" };
 };
 
+export type ProviderConfigSlot = {
+  apiKey?: string;
+  api_key?: string;
+  apiBase?: string;
+  api_base?: string;
+  extraHeaders?: Record<string, string> | null;
+  extra_headers?: Record<string, string> | null;
+};
+
+// Values in Agent.providers: per-type slots hold a config dict;
+// ``provider_ref`` / ``providerRef`` holds a string id (or null to unbind).
+export type ProviderValue = ProviderConfigSlot | string | null;
+
 export type Agent = {
   id: string;
   name: string;
@@ -95,9 +108,9 @@ export type Agent = {
   tools: ToolsCfg;
   skills?: SkillsCfg;
   channels: Record<string, Record<string, unknown>>;
-  // Values are either provider config dicts (per-type slot) or a scalar
-  // `provider_ref` string referencing a centrally-managed provider row.
-  providers?: Record<string, unknown>;
+  // Per-type slots map to config dicts; `provider_ref` / `providerRef` maps to
+  // a centrally-managed provider id (or null to unbind).
+  providers?: Record<string, ProviderValue>;
   heartbeat?: HeartbeatCfg;
   security?: SecurityCfg;
   mcp_status?: Record<string, MCPStatusInfo>;

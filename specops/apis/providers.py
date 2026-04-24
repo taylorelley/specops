@@ -237,6 +237,13 @@ async def list_provider_models(
     """
     provider = body.provider.lower()
 
+    def _pick(body_val: str, ref_val: str) -> str:
+        """Prefer inline body value, but fall back to the ref value when the body
+        value is missing or a redacted placeholder (``***…``)."""
+        if body_val and not body_val.startswith("***"):
+            return body_val
+        return ref_val
+
     # Resolve from the admin-managed provider store first.
     ref_api_key = ""
     ref_api_base = ""
@@ -252,8 +259,8 @@ async def list_provider_models(
 
     # Custom (OpenAI-compatible) provider: user-supplied base URL, GET {base}/models.
     if provider == "custom":
-        api_base = body.api_base or ref_api_base
-        api_key = body.api_key or ref_api_key
+        api_base = _pick(body.api_base, ref_api_base)
+        api_key = _pick(body.api_key, ref_api_key)
         if body.agent_id:
             stored_cfg = agent_config_store.get_config(body.agent_id) or {}
             stored = (stored_cfg.get("providers") or {}).get("custom") or {}
@@ -317,7 +324,7 @@ async def list_provider_models(
             "models": ep["models"],
         }
 
-    api_key = body.api_key or ref_api_key
+    api_key = _pick(body.api_key, ref_api_key)
 
     # Fall back to stored key when no explicit key provided
     if not api_key and body.agent_id:

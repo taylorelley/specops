@@ -108,13 +108,22 @@ export function ModelProviderSection({
       pollRef.current = null;
     }
     if (selection.kind !== "oauth") return;
+    // Cancellation guard: ignore a stale response if selection/agent changes
+    // before oauthStatus resolves.
+    let cancelled = false;
     api.providers
       .oauthStatus(selection.field, agentId)
       .then((r) => {
+        if (cancelled) return;
         setOauthAuthorized(r.authorized);
         setOauthAccountId(r.account_id ?? null);
       })
-      .catch(() => setOauthAuthorized(false));
+      .catch(() => {
+        if (!cancelled) setOauthAuthorized(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [selection, agentId]);
 
   useEffect(() => {
@@ -142,12 +151,17 @@ export function ModelProviderSection({
     setModelError("");
     if (selection.kind === "none") return;
 
+    // Cancellation guard: selection or agentId can change mid-flight; we don't
+    // want a stale response to overwrite the model list for the newer selection.
+    let cancelled = false;
+
     if (selection.kind === "oauth") {
       if (!oauthAuthorized) return;
       setLoadingModels(true);
       api.providers
         .listModels(selection.field, "", agentId)
         .then((r) => {
+          if (cancelled) return;
           setModels(r.models);
           const expectedPrefix = `${selection.field}/`;
           const hasModel = model && model.startsWith(expectedPrefix);
@@ -156,20 +170,33 @@ export function ModelProviderSection({
           }
         })
         .catch(() => {})
-        .finally(() => setLoadingModels(false));
-      return;
+        .finally(() => {
+          if (!cancelled) setLoadingModels(false);
+        });
+      return () => {
+        cancelled = true;
+      };
     }
 
     // Central ref
     setLoadingModels(true);
     api.providers
       .listModels(selection.type, "", agentId, undefined, selection.providerId)
-      .then((r) => setModels(r.models))
+      .then((r) => {
+        if (cancelled) return;
+        setModels(r.models);
+      })
       .catch((err) => {
+        if (cancelled) return;
         const msg = err instanceof Error ? err.message : String(err);
         setModelError(msg.replace(/^API \d+: /, ""));
       })
-      .finally(() => setLoadingModels(false));
+      .finally(() => {
+        if (!cancelled) setLoadingModels(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [selection, agentId, oauthAuthorized]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   function startPolling(provider: string) {

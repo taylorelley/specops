@@ -22,14 +22,17 @@ def validate_providers(raw: dict[str, Any] | None) -> dict[str, Any]:
 
     Accepts both camelCase and snake_case input. Returns dict of name -> validated dict.
     The ``provider_ref`` / ``providerRef`` scalar (points at an admin-managed provider
-    row) is passed through as ``provider_ref``.
+    row) is passed through as ``provider_ref``. When both keys are present, the
+    snake_case form wins regardless of dict iteration order.
     """
     if not raw or not isinstance(raw, dict):
         return {}
     result: dict[str, Any] = {}
+    if "provider_ref" in raw or "providerRef" in raw:
+        ref_value = raw["provider_ref"] if "provider_ref" in raw else raw.get("providerRef")
+        result["provider_ref"] = ref_value if ref_value is None else str(ref_value)
     for name, cfg in raw.items():
         if name in ("provider_ref", "providerRef"):
-            result["provider_ref"] = cfg if cfg is None else str(cfg)
             continue
         if isinstance(cfg, dict):
             validated = ProviderConfig.model_validate(cfg)

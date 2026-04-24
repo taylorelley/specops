@@ -38,22 +38,17 @@ def resolve_provider_ref(config: dict[str, Any], store: LLMProviderStore) -> dic
     if not provider_type:
         return config
 
-    resolved = {
-        "api_key": entry.get("api_key") or "",
-        "api_base": entry.get("api_base") or None,
-        "extra_headers": entry.get("extra_headers") or None,
-    }
-    # Drop None values so secret_fields redaction / validate_providers stay clean
-    resolved = {k: v for k, v in resolved.items() if v not in (None, "", {})}
-    # Always keep api_key even when empty so the worker sees the intended slot
-    resolved.setdefault("api_key", entry.get("api_key") or "")
+    # The provider row is authoritative — fully overwrite the slot so any stale
+    # inline api_base / extra_headers from a prior config are cleared.
+    merged_slot: dict[str, Any] = {"api_key": entry.get("api_key") or ""}
+    api_base = entry.get("api_base")
+    if api_base:
+        merged_slot["api_base"] = api_base
+    extra_headers = entry.get("extra_headers")
+    if extra_headers:
+        merged_slot["extra_headers"] = extra_headers
 
     new_providers = dict(providers)
-    existing_slot = new_providers.get(provider_type)
-    if isinstance(existing_slot, dict):
-        merged_slot = {**existing_slot, **resolved}
-    else:
-        merged_slot = resolved
     new_providers[provider_type] = merged_slot
 
     new_config = dict(config)

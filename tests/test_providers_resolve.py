@@ -55,18 +55,20 @@ class TestResolveProviderRef:
         assert resolved["providers"]["custom"]["api_key"] == "key"
         assert resolved["providers"]["custom"]["api_base"] == "https://example.com/v1"
 
-    def test_merges_with_existing_slot(self, store: LLMProviderStore):
+    def test_overrides_stale_inline_slot(self, store: LLMProviderStore):
+        """Central row is authoritative — stale inline api_key/extra_headers are replaced."""
         row = store.create(name="A", type="anthropic", api_key="sk-new")
         cfg = {
             "providers": {
                 "provider_ref": row["id"],
-                # Existing slot from prior config should merge, with resolved keys winning.
+                # These came from a prior inline config; they must not leak through.
                 "anthropic": {"extra_headers": {"X": "Y"}, "api_key": "stale"},
             }
         }
         resolved = resolve_provider_ref(cfg, store)
         assert resolved["providers"]["anthropic"]["api_key"] == "sk-new"
-        assert resolved["providers"]["anthropic"]["extra_headers"] == {"X": "Y"}
+        # No extra_headers on the row → none in the resolved slot.
+        assert "extra_headers" not in resolved["providers"]["anthropic"]
 
     def test_unknown_ref_is_noop(self, store: LLMProviderStore):
         cfg = {"providers": {"provider_ref": "does-not-exist"}}
@@ -98,3 +100,34 @@ class TestResolveProviderRef:
         # input dict should not gain the resolved slot
         assert "openai" not in cfg["providers"]
         assert "openai" in resolved["providers"]
+
+    def test_extra_headers_preserved_when_set(self, store: LLMProviderStore):
+        row = store.create(
+            name="H",
+            type="custom",
+            api_key="k",
+            api_base="https://x/v1",
+            extra_headers={"X-Org": "acme"},
+        )
+        cfg = {"providers": {"provider_ref": row["id"]}}
+        resolved = resolve_provider_ref(cfg, store)
+        assert resolved["providers"]["custom"]["extra_headers"] == {"X-Org": "acme"}
+
+    def test_extra_headers_dropped_when_row_has_none(self, store: LLMProviderStore):
+        """Row without extra_headers must clear any stale inline value."""
+        row = store.create(name="H2", type="openai", api_key="sk")
+        cfg = {
+            "providers": {
+                "provider_ref": row["id"],
+                "openai": {"extra_headers": {"Stale": "value"}},
+            }
+        }
+        resolved = resolve_provider_ref(cfg, store)
+        assert "extra_headers" not in resolved["providers"]["openai"]
+
+    def test_empty_api_key_still_populates_slot(self, store: LLMProviderStore):
+        """The worker needs the slot key present even when the key is blank."""
+        row = store.create(name="Empty", type="openai", api_key="")
+        cfg = {"providers": {"provider_ref": row["id"]}}
+        resolved = resolve_provider_ref(cfg, store)
+        assert resolved["providers"]["openai"] == {"api_key": ""}
