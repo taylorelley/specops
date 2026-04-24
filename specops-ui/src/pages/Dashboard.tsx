@@ -49,6 +49,23 @@ export default function Dashboard() {
   const userId = user?.id;
 
   const { stats, topAgents, topPlans } = useMemo(() => {
+    const emptyStats = {
+      agentsTotal: agents.length,
+      agentsRunning: agents.filter((a) => a.status === "running").length,
+      plansTotal: plans.length,
+      plansActive: plans.filter((p) => p.status === "active").length,
+      ownedCount: 0,
+      sharedCount: agents.length + plans.length,
+    };
+
+    if (!userId) {
+      return {
+        stats: emptyStats,
+        topAgents: agents.slice(0, TOP_N),
+        topPlans: plans.slice(0, TOP_N),
+      };
+    }
+
     const ownedAgents = agents.filter((a) => a.owner_user_id === userId);
     const sharedAgents = agents.filter((a) => a.owner_user_id !== userId);
     const runningAgents = agents.filter((a) => a.status === "running");
@@ -98,11 +115,12 @@ export default function Dashboard() {
           <PlanIcon className="mr-1.5 h-4 w-4" />
           New Plan
         </Button>
-        <Link to="/marketplace">
-          <Button variant="secondary">
-            <MarketplaceIcon className="mr-1.5 h-4 w-4" />
-            Browse Marketplace
-          </Button>
+        <Link
+          to="/marketplace"
+          className="inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-medium bg-claude-surface text-claude-text-secondary ring-1 ring-claude-border hover:bg-claude-hover transition-colors"
+        >
+          <MarketplaceIcon className="mr-1.5 h-4 w-4" />
+          Browse Marketplace
         </Link>
       </div>
 
