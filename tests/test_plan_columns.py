@@ -61,6 +61,39 @@ def _create_plan(client: TestClient, headers: dict, name: str = "P") -> dict:
     return resp.json()
 
 
+@pytest.fixture
+def make_active_plan(client: TestClient, admin_headers: dict):
+    """Seed an agent and a task on a plan, then activate it. Returns the task id."""
+
+    def _make_active_plan(plan_id: str, agent_id: str) -> str:
+        from specops.core.database import get_database
+
+        with get_database().connection() as conn:
+            conn.execute(
+                """INSERT INTO agents
+                   (id, name, description, color, enabled, status, base_path,
+                    agent_token, mode, created_at, updated_at)
+                   VALUES (?, ?, '', '', 1, 'stopped', '', ?, 'agent',
+                           '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')""",
+                (agent_id, agent_id, f"tkn-{agent_id}"),
+            )
+        assign = client.post(f"/api/plans/{plan_id}/agents/{agent_id}", headers=admin_headers)
+        assert assign.status_code == 200, assign.text
+        task_resp = client.post(
+            f"/api/plans/{plan_id}/tasks",
+            headers=admin_headers,
+            json={"column_id": "todo", "title": "x", "agent_id": agent_id},
+        )
+        assert task_resp.status_code == 200, task_resp.text
+        task = task_resp.json()
+        assert "id" in task and task["column_id"].endswith("-col-todo")
+        activated = client.post(f"/api/plans/{plan_id}/activate", headers=admin_headers)
+        assert activated.status_code == 200, activated.text
+        return task["id"]
+
+    return _make_active_plan
+
+
 class TestAddColumn:
     def test_add_column_appends_to_plan(self, client: TestClient, admin_headers):
         plan = _create_plan(client, admin_headers)
@@ -102,6 +135,16 @@ class TestAddColumn:
         )
         assert resp.status_code == 400
 
+    def test_add_column_rejects_negative_position(self, client: TestClient, admin_headers):
+        plan = _create_plan(client, admin_headers)
+        resp = client.post(
+            f"/api/plans/{plan['id']}/columns",
+            headers=admin_headers,
+            json={"title": "Col", "position": -1},
+        )
+        assert resp.status_code == 400
+        assert "position" in resp.json()["detail"].lower()
+
     def test_add_column_assigns_unique_ids_for_duplicate_titles(
         self, client: TestClient, admin_headers
     ):
@@ -118,29 +161,12 @@ class TestAddColumn:
         ).json()
         assert first["id"] != second["id"]
 
-    def test_add_column_blocked_when_plan_active(self, client: TestClient, admin_headers):
+    def test_add_column_blocked_when_plan_active(
+        self, client: TestClient, admin_headers, make_active_plan
+    ):
         """Active plans are frozen — you must pause first to reshape the board."""
         plan = _create_plan(client, admin_headers)
-        # Assign an agent and a task so activation succeeds (activation requires
-        # no unassigned tasks). Use the plan-agent assignment API to wire it up.
-        from specops.core.database import get_database
-
-        with get_database().connection() as conn:
-            conn.execute(
-                """INSERT INTO agents
-                   (id, name, description, color, enabled, status, base_path,
-                    agent_token, mode, created_at, updated_at)
-                   VALUES ('a1','a1','','',1,'stopped','','tkn-a1','agent',
-                           '2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')"""
-            )
-        client.post(f"/api/plans/{plan['id']}/agents/a1", headers=admin_headers)
-        client.post(
-            f"/api/plans/{plan['id']}/tasks",
-            headers=admin_headers,
-            json={"column_id": "todo", "title": "x", "agent_id": "a1"},
-        )
-        activated = client.post(f"/api/plans/{plan['id']}/activate", headers=admin_headers)
-        assert activated.status_code == 200, activated.text
+        make_active_plan(plan["id"], "a1")
 
         resp = client.post(
             f"/api/plans/{plan['id']}/columns",
@@ -183,6 +209,17 @@ class TestUpdateColumn:
             json={"title": "   "},
         )
         assert resp.status_code == 400
+
+    def test_update_column_rejects_negative_position(self, client: TestClient, admin_headers):
+        plan = _create_plan(client, admin_headers)
+        col = plan["columns"][0]
+        resp = client.put(
+            f"/api/plans/{plan['id']}/columns/{col['id']}",
+            headers=admin_headers,
+            json={"position": -1},
+        )
+        assert resp.status_code == 400
+        assert "position" in resp.json()["detail"].lower()
 
     def test_update_ignores_explicit_null_fields(self, client: TestClient, admin_headers):
         """Clients that send ``{"title": null}`` should no-op that field, not 500."""
@@ -259,27 +296,12 @@ class TestDeleteColumn:
 
 
 class TestPausedPlanAllowsColumnEdits:
-    def test_paused_plan_can_add_column(self, client: TestClient, admin_headers):
+    def test_paused_plan_can_add_column(self, client: TestClient, admin_headers, make_active_plan):
         """Pausing a plan should re-enable column management."""
-        from specops.core.database import get_database
-
         plan = _create_plan(client, admin_headers)
-        with get_database().connection() as conn:
-            conn.execute(
-                """INSERT INTO agents
-                   (id, name, description, color, enabled, status, base_path,
-                    agent_token, mode, created_at, updated_at)
-                   VALUES ('a1','a1','','',1,'stopped','','tkn-a1','agent',
-                           '2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')"""
-            )
-        client.post(f"/api/plans/{plan['id']}/agents/a1", headers=admin_headers)
-        client.post(
-            f"/api/plans/{plan['id']}/tasks",
-            headers=admin_headers,
-            json={"column_id": "todo", "title": "x", "agent_id": "a1"},
-        )
-        client.post(f"/api/plans/{plan['id']}/activate", headers=admin_headers)
-        client.post(f"/api/plans/{plan['id']}/deactivate", headers=admin_headers)
+        make_active_plan(plan["id"], "a1")
+        deactivated = client.post(f"/api/plans/{plan['id']}/deactivate", headers=admin_headers)
+        assert deactivated.status_code == 200, deactivated.text
 
         resp = client.post(
             f"/api/plans/{plan['id']}/columns",

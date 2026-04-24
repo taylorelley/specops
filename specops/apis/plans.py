@@ -416,6 +416,10 @@ def add_column(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Column title is required"
         )
+    if body.position is not None and body.position < 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Column position cannot be negative"
+        )
     column = store.add_column(plan_id, title=title, kind=body.kind, position=body.position)
     if not column:
         raise HTTPException(
@@ -442,6 +446,10 @@ def update_column(
     if body.title is not None and not body.title.strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Column title cannot be empty"
+        )
+    if body.position is not None and body.position < 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Column position cannot be negative"
         )
     kwargs = body.model_dump(exclude_unset=True)
     kwargs = {k: v for k, v in kwargs.items() if v is not None}
@@ -470,6 +478,8 @@ def delete_column(
     ok, reason = store.delete_column(plan_id, column_id)
     if ok:
         return {"ok": True}
+    if reason == "plan_not_found":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found")
     if reason == "column_not_found":
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Column not found")
     if reason == "last_column":
