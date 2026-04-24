@@ -43,6 +43,8 @@ import EditTaskModal from "../components/EditTaskModal";
 import TaskDetailModal from "../components/TaskDetailModal";
 import SharesPanel from "../components/SharesPanel";
 import ColumnEditorModal from "../components/ColumnEditorModal";
+import ManageColumnsModal from "../components/ManageColumnsModal";
+import ConfirmDialog from "../components/ConfirmDialog";
 
 marked.setOptions({ breaks: true, gfm: true });
 
@@ -642,23 +644,25 @@ function KanbanColumn({
               <button
                 type="button"
                 onClick={() => onEditColumn(column)}
-                className="rounded p-0.5 text-claude-text-muted hover:bg-claude-surface hover:text-claude-accent transition-colors"
+                className="rounded p-1 text-claude-text-secondary hover:bg-claude-surface hover:text-claude-accent transition-colors"
                 title="Edit column"
+                aria-label={`Edit ${column.title}`}
               >
-                <PencilIcon className="h-3.5 w-3.5" />
+                <PencilIcon className="h-4 w-4" />
               </button>
               <button
                 type="button"
                 onClick={() => onDeleteColumn(column)}
                 disabled={taskCount > 0}
-                className="rounded p-0.5 text-claude-text-muted hover:bg-red-50 dark:hover:bg-red-950/40 hover:text-red-600 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                className="rounded p-1 text-claude-text-secondary hover:bg-red-50 dark:hover:bg-red-950/40 hover:text-red-600 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
                 title={
                   taskCount > 0
                     ? "Move or delete tasks before removing this column"
                     : "Delete column"
                 }
+                aria-label={`Delete ${column.title}`}
               >
-                <TrashIcon className="h-3.5 w-3.5" />
+                <TrashIcon className="h-4 w-4" />
               </button>
             </>
           ) : null}
@@ -1238,6 +1242,9 @@ export default function PlanBoard() {
   const [editTask, setEditTask] = useState<PlanTaskType | null>(null);
   const [columnEditorOpen, setColumnEditorOpen] = useState(false);
   const [editingColumn, setEditingColumn] = useState<PlanColumnType | null>(null);
+  const [manageColumnsOpen, setManageColumnsOpen] = useState(false);
+  const [deleteColumnTarget, setDeleteColumnTarget] = useState<PlanColumnType | null>(null);
+  const [deleteColumnError, setDeleteColumnError] = useState<string | null>(null);
   const deleteColumn = useDeleteColumn(planId ?? "");
   type RunPanelTab = "general" | "timeline";
   const [runPanelTab, setRunPanelTab] = useState<RunPanelTab>("general");
@@ -1312,17 +1319,20 @@ export default function PlanBoard() {
   const columnsEditable = plan.status === "draft" || plan.status === "paused";
 
   const handleDeleteColumn = (col: PlanColumnType) => {
-    const count = (plan.tasks ?? []).filter((t) => t.column_id === col.id).length;
-    if (count > 0) {
-      window.alert(
-        `Column "${col.title}" still has ${count} task${count !== 1 ? "s" : ""}. Move or delete them before removing the column.`,
-      );
-      return;
-    }
-    if (!window.confirm(`Delete column "${col.title}"?`)) return;
-    deleteColumn.mutate(col.id, {
+    setDeleteColumnError(null);
+    setDeleteColumnTarget(col);
+  };
+
+  const confirmDeleteColumn = () => {
+    if (!deleteColumnTarget) return;
+    const target = deleteColumnTarget;
+    deleteColumn.mutate(target.id, {
+      onSuccess: () => {
+        setDeleteColumnTarget(null);
+        setDeleteColumnError(null);
+      },
       onError: (err) => {
-        window.alert(err instanceof Error ? err.message : "Failed to delete column");
+        setDeleteColumnError(err instanceof Error ? err.message : "Failed to delete column");
       },
     });
   };
@@ -1403,6 +1413,17 @@ export default function PlanBoard() {
         icon={<PlanIcon className="h-5 w-5" />}
         action={
           <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              onClick={() => setManageColumnsOpen(true)}
+              title={
+                columnsEditable
+                  ? "Add, edit, reorder or remove columns"
+                  : "View columns (pause the plan to edit)"
+              }
+            >
+              Columns ({plan.columns?.length ?? 0})
+            </Button>
             {(user?.role === "admin" ||
               plan.effective_permission === "owner" ||
               plan.effective_permission === "manager") && (
@@ -1673,6 +1694,32 @@ export default function PlanBoard() {
         }}
         planId={planId}
         column={editingColumn}
+      />
+
+      <ManageColumnsModal
+        open={manageColumnsOpen}
+        onClose={() => setManageColumnsOpen(false)}
+        plan={plan}
+      />
+
+      <ConfirmDialog
+        open={!!deleteColumnTarget}
+        onClose={() => {
+          setDeleteColumnTarget(null);
+          setDeleteColumnError(null);
+        }}
+        onConfirm={confirmDeleteColumn}
+        title="Delete column"
+        message={
+          deleteColumnTarget
+            ? deleteColumnError
+              ? `${deleteColumnError}`
+              : `Delete column "${deleteColumnTarget.title}"? This cannot be undone.`
+            : ""
+        }
+        confirmLabel="Delete"
+        isPending={deleteColumn.isPending}
+        variant="danger"
       />
 
       <Modal
