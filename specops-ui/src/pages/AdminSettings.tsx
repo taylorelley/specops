@@ -7,7 +7,336 @@ import { Card, PageHeader, PageContainer, Button, Input } from "../components/ui
 import Modal from "../components/Modal";
 import { useAuth } from "../contexts/AuthContext";
 
-type TabType = "general" | "password" | "users";
+type TabType = "general" | "password" | "users" | "providers";
+
+type AdminLLMProvider = {
+  id: string;
+  name: string;
+  type: string;
+  api_key: string;
+  api_base: string;
+  extra_headers: Record<string, string> | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type LLMProviderType = {
+  name: string;
+  display_name: string;
+  is_gateway: boolean;
+  is_local: boolean;
+  requires_api_base: boolean;
+};
+
+function ProviderFormModal({
+  title,
+  initial,
+  types,
+  onClose,
+  onSubmit,
+}: {
+  title: string;
+  initial?: AdminLLMProvider;
+  types: LLMProviderType[];
+  onClose: () => void;
+  onSubmit: (data: {
+    name: string;
+    type: string;
+    api_key: string;
+    api_base: string;
+    extra_headers: Record<string, string> | null;
+  }) => Promise<void>;
+}) {
+  const [name, setName] = useState(initial?.name ?? "");
+  const [type, setType] = useState(initial?.type ?? (types[0]?.name ?? ""));
+  const [apiKey, setApiKey] = useState("");
+  const [apiBase, setApiBase] = useState(initial?.api_base ?? "");
+  const [extraHeadersRaw, setExtraHeadersRaw] = useState(
+    initial?.extra_headers ? JSON.stringify(initial.extra_headers, null, 2) : "",
+  );
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const selectedType = types.find((t) => t.name === type);
+  const needsApiBase = !!(selectedType?.requires_api_base);
+  const showApiBase = needsApiBase;
+
+  // Clear apiBase whenever the selected type no longer exposes the field so a
+  // stale URL can't leak into the payload after switching types.
+  useEffect(() => {
+    if (!showApiBase) setApiBase("");
+  }, [showApiBase]);
+
+  async function handleSubmit() {
+    setErr("");
+    if (!name.trim()) {
+      setErr("Name is required");
+      return;
+    }
+    if (!type) {
+      setErr("Type is required");
+      return;
+    }
+    let extraHeaders: Record<string, string> | null = null;
+    if (extraHeadersRaw.trim()) {
+      try {
+        const parsed = JSON.parse(extraHeadersRaw);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+          setErr("Extra headers must be a JSON object");
+          return;
+        }
+        const entries = Object.entries(parsed as Record<string, unknown>);
+        if (entries.some(([, v]) => typeof v !== "string")) {
+          setErr("Extra headers values must be strings");
+          return;
+        }
+        extraHeaders = Object.fromEntries(entries) as Record<string, string>;
+      } catch {
+        setErr("Extra headers is not valid JSON");
+        return;
+      }
+    }
+    setBusy(true);
+    try {
+      await onSubmit({
+        name: name.trim(),
+        type,
+        api_key: apiKey,
+        api_base: showApiBase ? apiBase.trim() : "",
+        extra_headers: extraHeaders,
+      });
+      onClose();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Save failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal open={true} onClose={onClose} title={title}>
+      <div className="space-y-3">
+        {err && (
+          <div className="rounded-lg border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/40 px-3 py-2 text-xs text-red-700">
+            {err}
+          </div>
+        )}
+        <div>
+          <label className="mb-1 block text-xs font-medium text-claude-text-muted">Name</label>
+          <Input
+            autoFocus
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g. OpenAI-prod"
+            disabled={busy}
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-claude-text-muted">Type</label>
+          <select
+            value={type}
+            onChange={(e) => setType(e.target.value)}
+            disabled={busy}
+            className="w-full rounded-lg border border-claude-border bg-claude-bg px-3 py-2 text-sm"
+          >
+            {types.map((t) => (
+              <option key={t.name} value={t.name}>
+                {t.display_name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-claude-text-muted">
+            API Key {initial ? "(leave blank to keep existing)" : ""}
+          </label>
+          <Input
+            type="password"
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            placeholder={initial ? "•••" : "sk-..."}
+            disabled={busy}
+          />
+        </div>
+        {showApiBase && (
+          <div>
+            <label className="mb-1 block text-xs font-medium text-claude-text-muted">Base URL</label>
+            <Input
+              value={apiBase}
+              onChange={(e) => setApiBase(e.target.value)}
+              placeholder="https://api.example.com/v1"
+              disabled={busy}
+            />
+          </div>
+        )}
+        <details>
+          <summary className="cursor-pointer text-xs font-medium text-claude-text-muted">
+            Advanced
+          </summary>
+          <div className="mt-2">
+            <label className="mb-1 block text-xs font-medium text-claude-text-muted">
+              Extra headers (JSON)
+            </label>
+            <textarea
+              value={extraHeadersRaw}
+              onChange={(e) => setExtraHeadersRaw(e.target.value)}
+              placeholder='{"X-Example": "value"}'
+              disabled={busy}
+              rows={3}
+              className="w-full rounded-lg border border-claude-border bg-claude-bg px-3 py-2 font-mono text-xs"
+            />
+          </div>
+        </details>
+        <div className="flex justify-end gap-2 pt-2">
+          <Button variant="secondary" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button onClick={handleSubmit} disabled={busy}>
+            {busy ? "Saving…" : "Save"}
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function ProvidersTab() {
+  const [providers, setProviders] = useState<AdminLLMProvider[]>([]);
+  const [types, setTypes] = useState<LLMProviderType[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState<AdminLLMProvider | null>(null);
+
+  const load = useCallback(async () => {
+    setError("");
+    setLoading(true);
+    try {
+      const [list, typeList] = await Promise.all([
+        api.admin.llmProviders.list(),
+        api.admin.llmProviders.listTypes(),
+      ]);
+      setProviders(list);
+      setTypes(typeList);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load providers");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function handleDelete(p: AdminLLMProvider) {
+    if (!window.confirm(`Delete provider "${p.name}"? This cannot be undone.`)) return;
+    setError("");
+    try {
+      await api.admin.llmProviders.delete(p.id);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Delete failed");
+    }
+  }
+
+  return (
+    <Card>
+      <SectionHeader
+        icon={<LockIcon className="h-4 w-4 text-claude-text-muted" />}
+        title="LLM providers"
+        description="Configure API keys once. Agents pick from this list when selecting a model."
+      />
+
+      {error && <ErrorBanner message={error} />}
+
+      <div className="mb-4 flex justify-end">
+        <Button onClick={() => setCreating(true)}>Add provider</Button>
+      </div>
+
+      {loading ? (
+        <p className="text-xs text-claude-text-muted">Loading providers…</p>
+      ) : providers.length === 0 ? (
+        <p className="text-xs text-claude-text-muted">
+          No providers configured. Click <span className="font-medium">Add provider</span> to create the first one.
+        </p>
+      ) : (
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-xs text-claude-text-muted">
+              <th className="pb-2 font-medium">Name</th>
+              <th className="pb-2 font-medium">Type</th>
+              <th className="pb-2 font-medium">API Key</th>
+              <th className="pb-2 font-medium">Updated</th>
+              <th className="pb-2" />
+            </tr>
+          </thead>
+          <tbody>
+            {providers.map((p) => (
+              <tr key={p.id} className="border-t border-claude-border">
+                <td className="py-2 text-claude-text-primary">{p.name}</td>
+                <td className="py-2 text-xs text-claude-text-muted">{p.type}</td>
+                <td className="py-2 font-mono text-xs text-claude-text-muted">
+                  {p.api_key || "—"}
+                </td>
+                <td className="py-2 text-xs text-claude-text-muted">
+                  {p.updated_at?.slice(0, 10)}
+                </td>
+                <td className="py-2 text-right space-x-3">
+                  <button
+                    type="button"
+                    onClick={() => setEditing(p)}
+                    className="text-xs text-claude-accent hover:underline"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDelete(p)}
+                    className="text-xs text-red-600 hover:underline"
+                  >
+                    Delete
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {creating && (
+        <ProviderFormModal
+          title="Add provider"
+          types={types}
+          onClose={() => setCreating(false)}
+          onSubmit={async (data) => {
+            await api.admin.llmProviders.create(data);
+            await load();
+          }}
+        />
+      )}
+      {editing && (
+        <ProviderFormModal
+          title={`Edit — ${editing.name}`}
+          initial={editing}
+          types={types}
+          onClose={() => setEditing(null)}
+          onSubmit={async (data) => {
+            const patch: Parameters<typeof api.admin.llmProviders.update>[1] = {
+              name: data.name,
+              type: data.type,
+              api_base: data.api_base,
+              extra_headers: data.extra_headers,
+            };
+            if (data.api_key) patch.api_key = data.api_key;
+            await api.admin.llmProviders.update(editing.id, patch);
+            await load();
+          }}
+        />
+      )}
+    </Card>
+  );
+}
 
 function ResetPasswordModal({
   username,
@@ -500,6 +829,18 @@ export default function AdminSettings() {
               Users
             </button>
           )}
+          {isAdmin && (
+            <button
+              onClick={() => setActiveTab("providers")}
+              className={`py-3 px-1 font-medium text-sm border-b-2 transition-colors ${
+                activeTab === "providers"
+                  ? "border-claude-accent text-claude-accent"
+                  : "border-transparent text-claude-text-muted hover:text-claude-text-primary"
+              }`}
+            >
+              Providers
+            </button>
+          )}
         </div>
       </div>
 
@@ -582,6 +923,9 @@ export default function AdminSettings() {
 
         {/* ── Users Tab ─────────────────────────────────────────── */}
         {activeTab === "users" && isAdmin && <UsersTab />}
+
+        {/* ── Providers Tab ─────────────────────────────────────── */}
+        {activeTab === "providers" && isAdmin && <ProvidersTab />}
 
         {/* ── Password Tab ──────────────────────────────────────── */}
         {activeTab === "password" && (

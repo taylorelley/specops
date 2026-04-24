@@ -129,6 +129,19 @@ CREATE TABLE IF NOT EXISTS agent_variables (
     updated_at TEXT NOT NULL
 );
 
+-- Centrally-managed LLM providers. Admin configures named provider instances
+-- (e.g. "OpenAI-prod") and agents reference one by id via providers.provider_ref.
+-- config_json holds {api_key, api_base, extra_headers}, encrypted when
+-- SECRETS_MASTER_KEY is set.
+CREATE TABLE IF NOT EXISTS llm_providers (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    type TEXT NOT NULL,
+    config_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 -- Activity events (audit log; persisted when received from agents)
 CREATE TABLE IF NOT EXISTS activity_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -26,10 +26,12 @@ from specops.core.audit import log_agent_config_fetch
 from specops.core.database import get_database
 from specops.core.domain.agent import control_plane_overrides
 from specops.core.domain.runtime import AgentRuntimeBackend
+from specops.core.providers_resolve import resolve_provider_ref
 from specops.core.runtimes.factory import RUNTIME_BACKENDS, get_runtime_backend
 from specops.core.storage import StorageBackend, get_storage_root
 from specops.core.store.agent_config import AgentConfigStore
 from specops.core.store.agents import AgentStore
+from specops.core.store.llm_providers import LLMProviderStore
 from specops.deps import _get_fernet, get_runtime, get_storage
 from specops_lib.activity import ActivityEvent, ActivityLogRegistry
 
@@ -143,6 +145,7 @@ async def control_ws(websocket: WebSocket) -> None:
         await websocket.send_json({"type": "registered", "ok": True})
 
         agent_config_store = AgentConfigStore(get_database(), fernet=_get_fernet())
+        llm_provider_store = LLMProviderStore(get_database(), fernet=_get_fernet())
         agent = store.get_agent(agent_id)
 
         while True:
@@ -156,6 +159,7 @@ async def control_ws(websocket: WebSocket) -> None:
                 try:
                     if action == "get_config":
                         config = agent_config_store.get_config(agent_id) or {}
+                        config = resolve_provider_ref(config, llm_provider_store)
                         if agent:
                             config = {**config, "control_plane": control_plane_overrides(agent)}
                         client_ip = websocket.client.host if websocket.client else "unknown"

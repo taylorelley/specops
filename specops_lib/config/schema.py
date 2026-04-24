@@ -184,6 +184,10 @@ class ProviderConfig(Base):
 
 
 class ProvidersConfig(Base):
+    # Reference to an admin-managed LLM provider row (LLMProviderStore). When set
+    # the control plane resolves credentials at runtime and fills in the per-type
+    # slot below before the config reaches the worker.
+    provider_ref: str | None = Field(default=None, alias="providerRef")
     custom: ProviderConfig = Field(default_factory=ProviderConfig)
     anthropic: ProviderConfig = Field(default_factory=ProviderConfig)
     openai: ProviderConfig = Field(default_factory=ProviderConfig)

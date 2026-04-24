@@ -1,9 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../../../lib/api";
 import { css, PROVIDER_DEFS } from "../constants";
-import { detectProvider } from "../utils";
 
 type FetchedModel = { id: string; name: string };
+
+type CentralProvider = { id: string; name: string; type: string };
+
+// Non-OAuth selection uses a central provider ref prefixed with "ref:".
+// OAuth selection uses the raw provider field name (e.g. "chatgpt").
+type Selection =
+  | { kind: "none" }
+  | { kind: "ref"; providerId: string; type: string; name: string }
+  | { kind: "oauth"; field: string };
 
 export function ModelProviderSection({
   agentId,
@@ -14,54 +22,17 @@ export function ModelProviderSection({
 }: {
   agentId: string;
   model: string;
-  savedProviders?: Record<string, Record<string, unknown>>;
+  savedProviders?: Record<string, unknown>;
   onModelChange: (model: string) => void;
-  onProviderChange: (provider: string, patch: { apiKey?: string; apiBase?: string }) => void;
+  onProviderChange: (provider: string, patch: { apiKey?: string; apiBase?: string; providerRef?: string | null }) => void;
 }) {
-  // Derive initial provider from current model
-  const detected = detectProvider(model);
-  const [selectedProvider, setSelectedProvider] = useState(detected?.field || "");
+  const [centrals, setCentrals] = useState<CentralProvider[]>([]);
+  const [centralsLoading, setCentralsLoading] = useState(false);
+  const [centralsError, setCentralsError] = useState("");
 
-  // Sync selectedProvider when model prop changes externally (e.g. after save reloads agent)
-  const prevModelRef = useRef(model);
-  useEffect(() => {
-    if (model !== prevModelRef.current) {
-      prevModelRef.current = model;
-      const newDetected = detectProvider(model);
-      if (newDetected?.field && newDetected.field !== selectedProvider) {
-        setSelectedProvider(newDetected.field);
-      }
-    }
-  }, [model, selectedProvider]);
+  const savedRef = (savedProviders?.providerRef ?? savedProviders?.provider_ref ?? "") as string;
 
-  // Load saved API key: backend stores as api_key (snake), frontend may have apiKey (camel)
-  const savedKey = selectedProvider && savedProviders?.[selectedProvider]
-    ? ((savedProviders[selectedProvider].apiKey ?? savedProviders[selectedProvider].api_key ?? "") as string)
-    : "";
-  const [apiKey, setApiKey] = useState(savedKey);
-
-  // Sync apiKey when savedProviders refreshes (e.g. after save reloads agent data)
-  const prevSavedKeyRef = useRef(savedKey);
-  useEffect(() => {
-    if (savedKey !== prevSavedKeyRef.current) {
-      prevSavedKeyRef.current = savedKey;
-      setApiKey(savedKey);
-    }
-  }, [savedKey]);
-
-  // Custom provider: OpenAI-compatible base URL (snake/camel tolerant)
-  const savedBase = selectedProvider && savedProviders?.[selectedProvider]
-    ? ((savedProviders[selectedProvider].apiBase ?? savedProviders[selectedProvider].api_base ?? "") as string)
-    : "";
-  const [apiBase, setApiBase] = useState(savedBase);
-
-  const prevSavedBaseRef = useRef(savedBase);
-  useEffect(() => {
-    if (savedBase !== prevSavedBaseRef.current) {
-      prevSavedBaseRef.current = savedBase;
-      setApiBase(savedBase);
-    }
-  }, [savedBase]);
+  const [selection, setSelection] = useState<Selection>({ kind: "none" });
 
   const [models, setModels] = useState<FetchedModel[]>([]);
   const [loadingModels, setLoadingModels] = useState(false);
@@ -74,14 +45,92 @@ export function ModelProviderSection({
   // OAuth state
   const [oauthAuthorized, setOauthAuthorized] = useState<boolean | null>(null);
   const [oauthLoading, setOauthLoading] = useState(false);
-  const [oauthPending, setOauthPending] = useState(false); // waiting for user to finish in browser
+  const [oauthPending, setOauthPending] = useState(false);
   const [oauthError, setOauthError] = useState("");
   const [oauthAccountId, setOauthAccountId] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const providerDef = PROVIDER_DEFS.find((p) => p.field === selectedProvider);
-  // Non-OAuth providers need API keys
-  const needsKey = providerDef && !providerDef.oauth;
+  const oauthProviders = PROVIDER_DEFS.filter((p) => p.oauth);
+
+  // Load centrally-managed providers once on mount
+  useEffect(() => {
+    let cancelled = false;
+    setCentralsLoading(true);
+    api.llmProviders
+      .list()
+      .then((rows) => {
+        if (!cancelled) setCentrals(rows);
+      })
+      .catch((err) => {
+        if (!cancelled) setCentralsError(err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        if (!cancelled) setCentralsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Initialise selection from savedProviders.providerRef or any OAuth-only slot
+  useEffect(() => {
+    if (savedRef) {
+      const match = centrals.find((c) => c.id === savedRef);
+      if (match) {
+        setSelection({ kind: "ref", providerId: match.id, type: match.type, name: match.name });
+        return;
+      }
+      // Saved ref no longer exists (deleted by admin): fall back to none
+      setSelection({ kind: "none" });
+      return;
+    }
+    // No central ref — if an OAuth provider has stored creds, default to it
+    for (const def of oauthProviders) {
+      const slot = savedProviders?.[def.field];
+      if (slot && typeof slot === "object") {
+        setSelection({ kind: "oauth", field: def.field });
+        return;
+      }
+    }
+    setSelection({ kind: "none" });
+    // centrals changes when list loads; we intentionally only re-init then.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedRef, centrals]);
+
+  // Clear OAuth state on selection change
+  useEffect(() => {
+    setOauthAuthorized(null);
+    setOauthError("");
+    setOauthAccountId(null);
+    setOauthPending(false);
+    if (pollRef.current !== null) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+    if (selection.kind !== "oauth") return;
+    // Cancellation guard: ignore a stale response if selection/agent changes
+    // before oauthStatus resolves.
+    let cancelled = false;
+    api.providers
+      .oauthStatus(selection.field, agentId)
+      .then((r) => {
+        if (cancelled) return;
+        setOauthAuthorized(r.authorized);
+        setOauthAccountId(r.account_id ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setOauthAuthorized(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selection, agentId]);
+
+  useEffect(() => {
+    return () => {
+      if (pollRef.current !== null) clearInterval(pollRef.current);
+    };
+  }, []);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -96,35 +145,59 @@ export function ModelProviderSection({
     return () => document.removeEventListener("mousedown", onClickOutside);
   }, [modelDropdownOpen]);
 
-  // Stop polling when component unmounts or provider changes
+  // Fetch models when a selection is active and credentials exist
   useEffect(() => {
-    return () => {
-      if (pollRef.current !== null) clearInterval(pollRef.current);
-    };
-  }, []);
+    setModels([]);
+    setModelError("");
+    if (selection.kind === "none") return;
 
-  // Check OAuth status when an OAuth provider is selected
-  useEffect(() => {
-    if (!providerDef?.oauth) {
-      setOauthAuthorized(null);
-      setOauthError("");
-      setOauthAccountId(null);
-      setOauthPending(false);
-      if (pollRef.current !== null) { clearInterval(pollRef.current); pollRef.current = null; }
-      return;
+    // Cancellation guard: selection or agentId can change mid-flight; we don't
+    // want a stale response to overwrite the model list for the newer selection.
+    let cancelled = false;
+
+    if (selection.kind === "oauth") {
+      if (!oauthAuthorized) return;
+      setLoadingModels(true);
+      api.providers
+        .listModels(selection.field, "", agentId)
+        .then((r) => {
+          if (cancelled) return;
+          setModels(r.models);
+          const expectedPrefix = `${selection.field}/`;
+          const hasModel = model && model.startsWith(expectedPrefix);
+          if (!hasModel && r.models.length > 0) {
+            onModelChange(`${selection.field}/${r.models[0].id}`);
+          }
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (!cancelled) setLoadingModels(false);
+        });
+      return () => {
+        cancelled = true;
+      };
     }
-    setOauthAuthorized(null);
-    setOauthError("");
-    setOauthAccountId(null);
-    setOauthPending(false);
-    if (pollRef.current !== null) { clearInterval(pollRef.current); pollRef.current = null; }
-    api.providers.oauthStatus(selectedProvider, agentId)
+
+    // Central ref
+    setLoadingModels(true);
+    api.providers
+      .listModels(selection.type, "", agentId, undefined, selection.providerId)
       .then((r) => {
-        setOauthAuthorized(r.authorized);
-        setOauthAccountId(r.account_id ?? null);
+        if (cancelled) return;
+        setModels(r.models);
       })
-      .catch(() => setOauthAuthorized(false));
-  }, [selectedProvider, providerDef?.oauth]);
+      .catch((err) => {
+        if (cancelled) return;
+        const msg = err instanceof Error ? err.message : String(err);
+        setModelError(msg.replace(/^API \d+: /, ""));
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingModels(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selection, agentId, oauthAuthorized]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   function startPolling(provider: string) {
     if (pollRef.current !== null) clearInterval(pollRef.current);
@@ -135,73 +208,32 @@ export function ModelProviderSection({
           setOauthAuthorized(true);
           setOauthAccountId(r.account_id ?? null);
           setOauthPending(false);
-          if (pollRef.current !== null) { clearInterval(pollRef.current); pollRef.current = null; }
+          if (pollRef.current !== null) {
+            clearInterval(pollRef.current);
+            pollRef.current = null;
+          }
         }
       } catch { /* ignore poll errors */ }
     }, 2000);
   }
 
   function cancelPolling() {
-    if (pollRef.current !== null) { clearInterval(pollRef.current); pollRef.current = null; }
+    if (pollRef.current !== null) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
     setOauthPending(false);
   }
 
-  // Load model list once OAuth provider is authorized; auto-select first model if none chosen
-  useEffect(() => {
-    if (!providerDef?.oauth || !oauthAuthorized) return;
-    setLoadingModels(true);
-    setModelError("");
-    api.providers.listModels(selectedProvider, "", "")
-      .then((r) => {
-        setModels(r.models);
-        // Auto-select the first model when no model is set for this provider yet
-        const currentProviderPrefix = `${selectedProvider}/`;
-        const hasModel = model && model.startsWith(currentProviderPrefix);
-        if (!hasModel && r.models.length > 0) {
-          onModelChange(`${selectedProvider}/${r.models[0].id}`);
-        }
-      })
-      .catch(() => {})
-      .finally(() => setLoadingModels(false));
-  }, [selectedProvider, oauthAuthorized, providerDef?.oauth]);
-
-  // Auto-fetch models when provider changes (static/API-key providers only)
-  useEffect(() => {
-    if (!selectedProvider) { setModels([]); return; }
-    if (providerDef?.oauth) return; // handled by the OAuth effect above
-    const isStatic = ["bedrock", "azure"].includes(selectedProvider);
-    const hasSavedKey = !!(savedKey && savedKey.length > 0);
-    const isCustom = selectedProvider === "custom";
-    const hasSavedBase = !!(savedBase && savedBase.length > 0);
-    // Custom needs a base URL; API key is optional (self-hosted endpoints).
-    const canAutoFetch = isStatic || (isCustom ? hasSavedBase : hasSavedKey);
-    if (canAutoFetch) {
-      setLoadingModels(true);
-      setModelError("");
-      // For saved (redacted) keys/bases, pass agentId so backend uses stored values
-      const keyToSend = savedKey.startsWith("***") ? "" : savedKey;
-      const baseToSend = savedBase.startsWith("***") ? "" : savedBase;
-      api.providers.listModels(
-        selectedProvider,
-        keyToSend,
-        keyToSend && (!isCustom || baseToSend) ? undefined : agentId,
-        isCustom ? baseToSend : undefined,
-      )
-        .then((r) => setModels(r.models))
-        .catch(() => {})
-        .finally(() => setLoadingModels(false));
-    }
-  }, [selectedProvider, agentId, savedKey, savedBase, providerDef?.oauth]);
-
-  async function handleOAuthAuthorize() {
+  async function handleOAuthAuthorize(field: string) {
     setOauthLoading(true);
     setOauthError("");
     cancelPolling();
     try {
-      const r = await api.providers.oauthAuthorize(selectedProvider, agentId);
+      const r = await api.providers.oauthAuthorize(field, agentId);
       window.open(r.auth_url, "_blank", "noopener,noreferrer");
       setOauthPending(true);
-      startPolling(selectedProvider);
+      startPolling(field);
     } catch (err) {
       setOauthError((err instanceof Error ? err.message : String(err)).replace(/^API \d+: /, ""));
     } finally {
@@ -209,77 +241,50 @@ export function ModelProviderSection({
     }
   }
 
-  function doFetch() {
-    if (!selectedProvider) return;
-    const isCustom = selectedProvider === "custom";
-    const hasExplicitKey = apiKey.length > 0 && !apiKey.startsWith("***");
-    const hasExplicitBase = apiBase.length > 0 && !apiBase.startsWith("***");
-    // Custom requires a base URL; other providers require a key.
-    if (isCustom) {
-      if (!hasExplicitBase && !savedBase) return;
-    } else if (!hasExplicitKey && !savedKey) {
+  function handleSelectionChange(raw: string) {
+    if (!raw) {
+      setSelection({ kind: "none" });
+      onProviderChange("", { providerRef: null });
       return;
     }
-    setLoadingModels(true);
-    setModelError("");
-    setModels([]);
-    api.providers.listModels(
-      selectedProvider,
-      hasExplicitKey ? apiKey : "",
-      agentId,
-      isCustom ? (hasExplicitBase ? apiBase : "") : undefined,
-    )
-      .then((r) => setModels(r.models))
-      .catch((err) => {
-        const msg = err instanceof Error ? err.message : String(err);
-        if (msg.includes("401")) {
-          setModelError("Invalid API key");
-        } else {
-          setModelError(msg.replace(/^API \d+: /, ""));
-        }
-      })
-      .finally(() => setLoadingModels(false));
-  }
-
-  function handleProviderChange(field: string) {
-    setSelectedProvider(field);
-    // Load saved API key for the new provider
-    const saved = field && savedProviders?.[field]
-      ? ((savedProviders[field].apiKey ?? savedProviders[field].api_key ?? "") as string)
-      : "";
-    setApiKey(typeof saved === "string" && !saved.startsWith("***") ? saved : "");
-    const savedBaseForField = field && savedProviders?.[field]
-      ? ((savedProviders[field].apiBase ?? savedProviders[field].api_base ?? "") as string)
-      : "";
-    setApiBase(typeof savedBaseForField === "string" && !savedBaseForField.startsWith("***") ? savedBaseForField : "");
-    setModels([]);
-    setModelError("");
-    setModelSearch("");
+    if (raw.startsWith("ref:")) {
+      const id = raw.slice(4);
+      const entry = centrals.find((c) => c.id === id);
+      if (!entry) {
+        setSelection({ kind: "none" });
+        return;
+      }
+      setSelection({ kind: "ref", providerId: entry.id, type: entry.type, name: entry.name });
+      onProviderChange(entry.type, { providerRef: entry.id });
+      return;
+    }
+    if (raw.startsWith("oauth:")) {
+      const field = raw.slice(6);
+      setSelection({ kind: "oauth", field });
+      // Clear any central provider ref when switching to OAuth
+      onProviderChange(field, { providerRef: null });
+      return;
+    }
   }
 
   function handleModelSelect(modelId: string) {
-    const fullModel = `${selectedProvider}/${modelId}`;
-    // Persist API key / base URL into agent.providers so they're included in "Save Changes"
-    if (needsKey) {
-      const patch: { apiKey?: string; apiBase?: string } = {};
-      if (apiKey && !apiKey.startsWith("***")) patch.apiKey = apiKey;
-      if (selectedProvider === "custom" && apiBase && !apiBase.startsWith("***")) patch.apiBase = apiBase;
-      if (Object.keys(patch).length > 0) onProviderChange(selectedProvider, patch);
-    }
-    // OAuth providers: no key to propagate — credentials live in the OS credential store
-    onModelChange(fullModel);
+    if (selection.kind === "none") return;
+    const prefix = selection.kind === "oauth" ? selection.field : selection.type;
+    onModelChange(`${prefix}/${modelId}`);
     setModelDropdownOpen(false);
     setModelSearch("");
   }
 
+  const selectedValue =
+    selection.kind === "ref"
+      ? `ref:${selection.providerId}`
+      : selection.kind === "oauth"
+        ? `oauth:${selection.field}`
+        : "";
+
   const currentModelDisplay = model
     ? model.includes("/") ? model.substring(model.indexOf("/") + 1) : model
     : "";
-
-  const hasUsableKey = apiKey.length > 0 || !!(savedKey && savedKey.length > 0);
-  const hasUsableBase = apiBase.length > 0 || !!(savedBase && savedBase.length > 0);
-  // Custom only needs a base URL to fetch models; API key is optional.
-  const canFetchModels = selectedProvider === "custom" ? hasUsableBase : hasUsableKey;
 
   const filteredModels = modelSearch
     ? models.filter((m) =>
@@ -288,34 +293,50 @@ export function ModelProviderSection({
     )
     : models;
 
+  const oauthDef = selection.kind === "oauth" ? oauthProviders.find((p) => p.field === selection.field) : undefined;
+
   return (
     <div className="space-y-2.5">
-      {/* Row 1: Provider + API Key / OAuth */}
       <div className="flex gap-4 flex-wrap items-end">
-        <div className={(needsKey || providerDef?.oauth) ? "min-w-[140px]" : "flex-1 min-w-[160px]"}>
+        <div className="flex-1 min-w-[220px]">
           <label className={css.label}>Provider</label>
           <select
             className={`${css.input} w-full`}
-            value={selectedProvider}
-            onChange={(e) => handleProviderChange(e.target.value)}
+            value={selectedValue}
+            onChange={(e) => handleSelectionChange(e.target.value)}
           >
-            <option value="">Select a provider…</option>
-            <optgroup label="── Subscription (no API key)">
-              {PROVIDER_DEFS.filter((p) => p.oauth).map((p) => (
-                <option key={p.field} value={p.field}>{p.label}</option>
-              ))}
-            </optgroup>
-            <optgroup label="── API Key">
-              {PROVIDER_DEFS.filter((p) => !p.oauth).map((p) => (
-                <option key={p.field} value={p.field}>{p.label}</option>
+            <option value="">
+              {centralsLoading ? "Loading providers…" : "Select a provider…"}
+            </option>
+            {centrals.length > 0 && (
+              <optgroup label="── Centrally-managed">
+                {centrals.map((c) => (
+                  <option key={c.id} value={`ref:${c.id}`}>
+                    {c.name} ({c.type})
+                  </option>
+                ))}
+              </optgroup>
+            )}
+            <optgroup label="── Subscription (OAuth)">
+              {oauthProviders.map((p) => (
+                <option key={p.field} value={`oauth:${p.field}`}>
+                  {p.label}
+                </option>
               ))}
             </optgroup>
           </select>
+          {centralsError && (
+            <p className="mt-1 text-[10px] text-red-500">{centralsError}</p>
+          )}
+          {!centralsLoading && centrals.length === 0 && !centralsError && (
+            <p className="mt-1 text-[10px] text-claude-text-muted">
+              No centrally-managed providers yet. An admin can add them in Settings → Providers.
+            </p>
+          )}
         </div>
 
-        {/* OAuth authorization UI */}
-        {selectedProvider && providerDef?.oauth && (
-          <div className="flex-1 min-w-[200px]">
+        {selection.kind === "oauth" && oauthDef && (
+          <div className="flex-1 min-w-[220px]">
             <label className={css.label}>Authorization</label>
             {oauthAuthorized === null && !oauthPending && (
               <p className="text-xs text-claude-text-muted">Checking status…</p>
@@ -328,7 +349,7 @@ export function ModelProviderSection({
                 </span>
                 <button
                   type="button"
-                  onClick={handleOAuthAuthorize}
+                  onClick={() => handleOAuthAuthorize(selection.field)}
                   disabled={oauthLoading}
                   className={`${css.btn} text-xs text-claude-text-muted ring-1 ring-claude-border hover:bg-claude-surface disabled:opacity-40`}
                 >
@@ -359,11 +380,11 @@ export function ModelProviderSection({
               <div className="flex flex-col gap-1.5">
                 <button
                   type="button"
-                  onClick={handleOAuthAuthorize}
+                  onClick={() => handleOAuthAuthorize(selection.field)}
                   disabled={oauthLoading}
                   className={`${css.btn} text-claude-accent ring-1 ring-claude-accent/30 hover:bg-claude-accent/5 disabled:opacity-40 disabled:cursor-not-allowed`}
                 >
-                  {oauthLoading ? "Opening browser…" : `Connect ${providerDef.label}`}
+                  {oauthLoading ? "Opening browser…" : `Connect ${oauthDef.label}`}
                 </button>
                 {oauthError && <p className="text-xs text-red-500">{oauthError}</p>}
                 <p className="text-[10px] text-claude-text-muted">Opens a new tab to authorize</p>
@@ -371,43 +392,9 @@ export function ModelProviderSection({
             )}
           </div>
         )}
-
-        {/* API key input for non-OAuth providers */}
-        {selectedProvider && needsKey && (
-          <div className="flex-1 min-w-[200px]">
-            <label className={css.label}>API Key</label>
-            <input
-              className={`${css.input} w-full`}
-              type="password"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") doFetch(); }}
-              placeholder={`${providerDef!.label} API key`}
-            />
-          </div>
-        )}
       </div>
 
-      {/* Base URL input — only for the Custom (OpenAI-compatible) provider */}
-      {selectedProvider === "custom" && (
-        <div>
-          <label className={css.label}>Base URL</label>
-          <input
-            className={`${css.input} w-full`}
-            type="text"
-            value={apiBase}
-            onChange={(e) => setApiBase(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") doFetch(); }}
-            placeholder="https://api.example.com/v1"
-          />
-          <p className="mt-1 text-[10px] text-claude-text-muted">
-            Must be an OpenAI API compatible endpoint (e.g. vLLM, LM Studio, a private gateway).
-          </p>
-        </div>
-      )}
-
-      {/* Row 2: Model + Fetch models */}
-      {selectedProvider && (
+      {selection.kind !== "none" && (
         <div>
           <label className={css.label}>Model</label>
           {modelError && (
@@ -415,122 +402,97 @@ export function ModelProviderSection({
           )}
           <div className="flex gap-2">
             <div ref={dropdownRef} className="relative flex-1 min-w-0">
-            <button
-              type="button"
-              onClick={() => {
-                if (models.length > 0) {
-                  setModelDropdownOpen(!modelDropdownOpen);
-                  setTimeout(() => searchRef.current?.focus(), 0);
-                }
-              }}
-              disabled={models.length === 0 && !loadingModels}
-              className={`${css.input} flex items-center justify-between text-left disabled:opacity-50 disabled:cursor-not-allowed`}
-            >
-              <span className={currentModelDisplay ? "text-claude-text-primary" : "text-claude-text-muted"}>
-                {loadingModels
-                  ? "Loading models…"
-                  : models.length === 0
-                    ? (needsKey
-                        ? (selectedProvider === "custom"
-                            ? (hasUsableBase ? "Click Fetch models to load" : "Enter base URL and fetch models")
-                            : (savedKey ? "Click Fetch models to load" : "Enter API key and fetch models"))
-                        : providerDef?.oauth
+              <button
+                type="button"
+                onClick={() => {
+                  if (models.length > 0) {
+                    setModelDropdownOpen(!modelDropdownOpen);
+                    setTimeout(() => searchRef.current?.focus(), 0);
+                  }
+                }}
+                disabled={models.length === 0 && !loadingModels}
+                className={`${css.input} flex items-center justify-between text-left disabled:opacity-50 disabled:cursor-not-allowed`}
+              >
+                <span className={currentModelDisplay ? "text-claude-text-primary" : "text-claude-text-muted"}>
+                  {loadingModels
+                    ? "Loading models…"
+                    : models.length === 0
+                      ? (selection.kind === "oauth"
                           ? (oauthAuthorized ? "Select a model…" : "Connect first to browse models")
-                          : "Select a provider first")
-                    : currentModelDisplay || "Select a model…"}
-              </span>
-              <svg className="h-4 w-4 text-claude-text-muted flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-              </svg>
-            </button>
-
-            {modelDropdownOpen && models.length > 0 && (
-              <div className="absolute z-50 mt-1 w-full rounded-xl border border-claude-border bg-claude-input shadow-lg">
-                <div className="border-b border-claude-border p-2">
-                  <input
-                    ref={searchRef}
-                    className="w-full rounded-lg border border-claude-border bg-claude-bg px-3 py-1.5 text-sm text-claude-text-primary placeholder:text-claude-text-muted focus:border-claude-accent focus:outline-none"
-                    placeholder="Search models…"
-                    value={modelSearch}
-                    onChange={(e) => setModelSearch(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Escape") {
-                        setModelDropdownOpen(false);
-                        setModelSearch("");
-                      }
-                      if (e.key === "Enter" && filteredModels.length === 1) {
-                        handleModelSelect(filteredModels[0].id);
-                      }
-                    }}
-                  />
-                </div>
-                <div className="max-h-64 overflow-y-auto p-1">
-                  {filteredModels.length === 0 && (
-                    <div className="px-3 py-4 text-center text-xs text-claude-text-muted">
-                      No matching models.
-                    </div>
-                  )}
-                  {filteredModels.map((m) => {
-                    const fullId = `${selectedProvider}/${m.id}`;
-                    return (
-                      <button
-                        key={m.id}
-                        type="button"
-                        onClick={() => handleModelSelect(m.id)}
-                        className={`flex w-full items-center justify-between rounded-lg px-3 py-1.5 text-left text-sm transition-colors ${
-                          fullId === model
-                            ? "bg-claude-accent/10 text-claude-accent font-medium"
-                            : "text-claude-text-secondary hover:bg-claude-surface"
-                        }`}
-                      >
-                        <span className="font-mono text-xs truncate">{m.id}</span>
-                        {m.name !== m.id && (
-                          <span className="text-[10px] text-claude-text-muted ml-2 shrink-0">{m.name}</span>
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-                <div className="border-t border-claude-border p-2">
-                  <p className="text-[10px] text-claude-text-muted text-center">
-                    {models.length} model{models.length !== 1 ? "s" : ""} available
-                  </p>
-                </div>
-              </div>
-            )}
-          </div>
-          {needsKey && (
-            <button
-              type="button"
-              onClick={doFetch}
-              disabled={!canFetchModels || loadingModels}
-              className={`${css.btn} shrink-0 text-claude-accent ring-1 ring-claude-accent/30 hover:bg-claude-accent/5 disabled:opacity-40 disabled:cursor-not-allowed`}
-            >
-              {loadingModels ? (
-                <svg className="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                          : "No models available")
+                      : currentModelDisplay || "Select a model…"}
+                </span>
+                <svg className="h-4 w-4 text-claude-text-muted flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                 </svg>
-              ) : "Fetch models"}
-            </button>
-          )}
+              </button>
+
+              {modelDropdownOpen && models.length > 0 && (
+                <div className="absolute z-50 mt-1 w-full rounded-xl border border-claude-border bg-claude-input shadow-lg">
+                  <div className="border-b border-claude-border p-2">
+                    <input
+                      ref={searchRef}
+                      className="w-full rounded-lg border border-claude-border bg-claude-bg px-3 py-1.5 text-sm text-claude-text-primary placeholder:text-claude-text-muted focus:border-claude-accent focus:outline-none"
+                      placeholder="Search models…"
+                      value={modelSearch}
+                      onChange={(e) => setModelSearch(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Escape") {
+                          setModelDropdownOpen(false);
+                          setModelSearch("");
+                        }
+                        if (e.key === "Enter" && filteredModels.length === 1) {
+                          handleModelSelect(filteredModels[0].id);
+                        }
+                      }}
+                    />
+                  </div>
+                  <div className="max-h-64 overflow-y-auto p-1">
+                    {filteredModels.length === 0 && (
+                      <div className="px-3 py-4 text-center text-xs text-claude-text-muted">
+                        No matching models.
+                      </div>
+                    )}
+                    {filteredModels.map((m) => {
+                      const prefix = selection.kind === "oauth" ? selection.field : selection.type;
+                      const fullId = `${prefix}/${m.id}`;
+                      return (
+                        <button
+                          key={m.id}
+                          type="button"
+                          onClick={() => handleModelSelect(m.id)}
+                          className={`flex w-full items-center justify-between rounded-lg px-3 py-1.5 text-left text-sm transition-colors ${
+                            fullId === model
+                              ? "bg-claude-accent/10 text-claude-accent font-medium"
+                              : "text-claude-text-secondary hover:bg-claude-surface"
+                          }`}
+                        >
+                          <span className="font-mono text-xs truncate">{m.id}</span>
+                          {m.name !== m.id && (
+                            <span className="text-[10px] text-claude-text-muted ml-2 shrink-0">{m.name}</span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="border-t border-claude-border p-2">
+                    <p className="text-[10px] text-claude-text-muted text-center">
+                      {models.length} model{models.length !== 1 ? "s" : ""} available
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
 
-          {/* Manual model input fallback */}
           <div className="mt-1.5">
             <button
               type="button"
               onClick={() => {
+                const prefix = selection.kind === "oauth" ? selection.field : selection.type;
                 const manual = prompt("Enter model ID (e.g. claude-sonnet-4-20250514):", currentModelDisplay);
                 if (manual !== null && manual.trim()) {
-                  const fullModel = selectedProvider ? `${selectedProvider}/${manual.trim()}` : manual.trim();
-                  if (needsKey) {
-                    const patch: { apiKey?: string; apiBase?: string } = {};
-                    if (apiKey && !apiKey.startsWith("***")) patch.apiKey = apiKey;
-                    if (selectedProvider === "custom" && apiBase && !apiBase.startsWith("***")) patch.apiBase = apiBase;
-                    if (Object.keys(patch).length > 0) onProviderChange(selectedProvider, patch);
-                  }
-                  onModelChange(fullModel);
+                  onModelChange(`${prefix}/${manual.trim()}`);
                 }
               }}
               className="text-[11px] text-claude-text-muted hover:text-claude-accent transition-colors"

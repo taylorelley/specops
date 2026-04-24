@@ -14,6 +14,7 @@ from specops.core.store import AgentStore, PlanStore, ShareStore, Store, UserSto
 from specops.core.store.activity_events import ActivityEventsStore
 from specops.core.store.agent_config import AgentConfigStore
 from specops.core.store.agent_variables import AgentVariablesStore
+from specops.core.store.llm_providers import LLMProviderStore
 from specops.core.store.plan_artifacts import PlanArtifactStore
 from specops.core.store.process_logs import ProcessLogStore
 from specops.core.ws import ConnectionManager
@@ -124,6 +125,10 @@ def get_fernet() -> Fernet | None:
 
 def get_agent_variables_store(_request: Request) -> AgentVariablesStore:
     return AgentVariablesStore(get_database(), fernet=get_fernet())
+
+
+def get_llm_provider_store(_request: Request) -> LLMProviderStore:
+    return LLMProviderStore(get_database(), fernet=get_fernet())
 
 
 def get_run_store(request: Request) -> RunStore:

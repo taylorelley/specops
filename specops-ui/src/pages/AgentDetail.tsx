@@ -24,6 +24,9 @@ const CHANNEL_SECRET_KEYS = new Set(
 
 const PROVIDER_SECRET_KEYS = new Set(["apiKey", "api_key"]);
 
+// Top-level fields of ProvidersConfig that are not per-type provider slots.
+const PROVIDER_META_KEYS = new Set(["provider_ref", "providerRef"]);
+
 function channelsPayloadForUpdate(channels: Record<string, Record<string, unknown>>): Record<string, Record<string, unknown>> {
   const out: Record<string, Record<string, unknown>> = {};
   for (const [chKey, chData] of Object.entries(channels)) {
@@ -43,13 +46,19 @@ function channelsPayloadForUpdate(channels: Record<string, Record<string, unknow
   return out;
 }
 
-function providersPayloadForUpdate(providers: Record<string, Record<string, unknown>> | undefined): Record<string, Record<string, unknown>> | undefined {
+function providersPayloadForUpdate(providers: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
   if (!providers || typeof providers !== "object") return undefined;
-  const out: Record<string, Record<string, unknown>> = {};
+  const out: Record<string, unknown> = {};
   for (const [pKey, pData] of Object.entries(providers)) {
+    if (PROVIDER_META_KEYS.has(pKey)) {
+      // providerRef can be string | null — pass through unchanged so backend
+      // can switch/unset the central binding.
+      out[pKey] = pData;
+      continue;
+    }
     if (!pData || typeof pData !== "object") continue;
     const filtered: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(pData)) {
+    for (const [k, v] of Object.entries(pData as Record<string, unknown>)) {
       if (PROVIDER_SECRET_KEYS.has(k) && typeof v === "string" && v.startsWith("***")) continue;
       filtered[k] = v;
     }
@@ -223,7 +232,7 @@ export default function AgentDetail() {
         }
       }
       const channelsToSend = channelsPayloadForUpdate(channels);
-      const providersToSend = providersPayloadForUpdate(currentAgent.providers as Record<string, Record<string, unknown>> | undefined);
+      const providersToSend = providersPayloadForUpdate(currentAgent.providers as Record<string, unknown> | undefined);
 
       const payload: Record<string, unknown> = {
         name: currentAgent.name,

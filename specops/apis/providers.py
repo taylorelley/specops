@@ -24,7 +24,8 @@ from pydantic import BaseModel
 
 from specops.auth import get_current_user
 from specops.core.store.agent_config import AgentConfigStore
-from specops.deps import get_agent_config_store
+from specops.core.store.llm_providers import LLMProviderStore
+from specops.deps import get_agent_config_store, get_llm_provider_store
 from specops_lib.http import httpx_verify
 
 router = APIRouter(tags=["providers"])
@@ -213,6 +214,7 @@ class ListModelsRequest(BaseModel):
     api_key: str = ""
     agent_id: str = ""
     api_base: str = ""
+    provider_ref: str = ""
 
 
 @router.post("/api/providers/models")
@@ -220,18 +222,45 @@ async def list_provider_models(
     body: ListModelsRequest,
     _: dict = Depends(get_current_user),
     agent_config_store: AgentConfigStore = Depends(get_agent_config_store),
+    llm_provider_store: LLMProviderStore = Depends(get_llm_provider_store),
 ):
     """Fetch available models from a provider using the given API key.
 
-    If api_key is empty but agent_id is provided, the stored key for that
-    provider is read from the agent's persisted config.
+    Credential resolution, in order:
+
+    1. ``provider_ref`` — look up the admin-managed provider row (preferred for
+       central providers; the UI passes this when the user picks from the
+       central dropdown).
+    2. Inline ``api_key`` / ``api_base`` from the body.
+    3. ``agent_id`` — fall back to keys stored in that agent's persisted
+       config (used by OAuth providers whose tokens remain per-agent).
     """
     provider = body.provider.lower()
 
+    def _pick(body_val: str, ref_val: str) -> str:
+        """Prefer inline body value, but fall back to the ref value when the body
+        value is missing or a redacted placeholder (``***…``)."""
+        if body_val and not body_val.startswith("***"):
+            return body_val
+        return ref_val
+
+    # Resolve from the admin-managed provider store first.
+    ref_api_key = ""
+    ref_api_base = ""
+    if body.provider_ref:
+        entry = llm_provider_store.get(body.provider_ref, with_secrets=True)
+        if entry:
+            ref_api_key = entry.get("api_key") or ""
+            ref_api_base = entry.get("api_base") or ""
+            # ``provider`` in the body may be empty when the caller only knows
+            # the ref — use the stored type.
+            if entry.get("type"):
+                provider = str(entry["type"]).lower()
+
     # Custom (OpenAI-compatible) provider: user-supplied base URL, GET {base}/models.
     if provider == "custom":
-        api_base = body.api_base
-        api_key = body.api_key
+        api_base = _pick(body.api_base, ref_api_base)
+        api_key = _pick(body.api_key, ref_api_key)
         if body.agent_id:
             stored_cfg = agent_config_store.get_config(body.agent_id) or {}
             stored = (stored_cfg.get("providers") or {}).get("custom") or {}
@@ -295,7 +324,7 @@ async def list_provider_models(
             "models": ep["models"],
         }
 
-    api_key = body.api_key
+    api_key = _pick(body.api_key, ref_api_key)
 
     # Fall back to stored key when no explicit key provided
     if not api_key and body.agent_id:

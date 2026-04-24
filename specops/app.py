@@ -17,6 +17,7 @@ from specops.apis.agents import router as agents_router
 from specops.apis.auth import router as auth_router
 from specops.apis.config import router as config_router
 from specops.apis.control import router as control_router
+from specops.apis.llm_providers import router as llm_providers_router
 from specops.apis.logs import router as logs_router
 from specops.apis.mcp_registry import router as mcp_registry_router
 from specops.apis.plan_templates import router as plan_templates_router
@@ -94,6 +95,7 @@ def create_app() -> FastAPI:
     app.include_router(workspace_router)
     app.include_router(config_router)
     app.include_router(control_router)
+    app.include_router(llm_providers_router)
     app.include_router(logs_router)
     app.include_router(terminal_router)
     app.include_router(webhooks_router)

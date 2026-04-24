@@ -10,15 +10,18 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from specops.auth import get_current_user
 from specops.core.domain.runtime import AgentRuntimeBackend, AgentRuntimeError
+from specops.core.providers_resolve import resolve_provider_ref
 from specops.core.secrets import global_config_redacted
 from specops.core.storage import StorageBackend
 from specops.core.store.agent_config import AgentConfigStore
 from specops.core.store.agent_variables import AgentVariablesStore
 from specops.core.store.agents import AgentStore
+from specops.core.store.llm_providers import LLMProviderStore
 from specops.deps import (
     get_agent_config_store,
     get_agent_store,
     get_agent_variables_store,
+    get_llm_provider_store,
     get_runtime,
     get_storage,
 )
@@ -92,6 +95,7 @@ async def put_agent_config(
     store: AgentStore = Depends(get_agent_store),
     runtime: AgentRuntimeBackend = Depends(get_runtime),
     agent_config_store: AgentConfigStore = Depends(get_agent_config_store),
+    llm_provider_store: LLMProviderStore = Depends(get_llm_provider_store),
 ):
     """Save config for the given agent. Persists to AgentConfigStore; pushes to agent when online."""
     agent = store.get_agent(agent_id)
@@ -101,13 +105,16 @@ async def put_agent_config(
     clean = strip_redacted(body.model_dump(exclude_unset=True, exclude_none=True))
 
     persisted = agent_config_store.update_config(agent_id, clean)
+    # Resolve the admin-managed provider so the running agent receives real
+    # credentials; persisted stays reference-only in the DB.
+    resolved = resolve_provider_ref(persisted, llm_provider_store)
 
     runtime_status = await runtime.get_status(agent_id)
     if runtime_status.status in ("provisioning", "connecting"):
         return _config_response_persisted(persisted)
 
     try:
-        config_dict = await runtime.apply_config(agent_id, persisted)
+        config_dict = await runtime.apply_config(agent_id, resolved)
     except AgentRuntimeError:
         return _config_response_persisted(persisted)
     if config_dict is None:

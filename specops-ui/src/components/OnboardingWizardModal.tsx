@@ -3,7 +3,7 @@ import { api } from "../lib/api";
 import { CHANNEL_DEFS, css } from "./agent-detail/constants";
 import { ChannelsTab } from "./agent-detail/settings/ChannelsTab";
 import { ModelProviderSection } from "./agent-detail/settings/ModelProviderSection";
-import type { Agent } from "./agent-detail/types";
+import type { Agent, ProviderConfigSlot, ProviderValue } from "./agent-detail/types";
 import Modal from "./Modal";
 
 const CHANNEL_SECRET_KEYS = new Set(
@@ -229,15 +229,27 @@ export function OnboardingWizardModal({
             <ModelProviderSection
               agentId={agent.id}
               model={wizardAgent.model}
-              savedProviders={wizardAgent.providers as Record<string, Record<string, unknown>> | undefined}
+              savedProviders={wizardAgent.providers as Record<string, unknown> | undefined}
               onModelChange={(v) => update({ model: v })}
               onProviderChange={(provider, patch) => {
-                update({
-                  providers: {
-                    ...wizardAgent.providers,
-                    [provider]: { ...(wizardAgent.providers?.[provider] || {}), ...patch },
-                  },
-                });
+                const nextProviders: Record<string, ProviderValue> = { ...(wizardAgent.providers ?? {}) };
+                if (patch.providerRef === null) {
+                  delete nextProviders.provider_ref;
+                  delete nextProviders.providerRef;
+                } else if (typeof patch.providerRef === "string") {
+                  nextProviders.provider_ref = patch.providerRef;
+                  delete nextProviders.providerRef;
+                }
+                if (provider && (patch.apiKey !== undefined || patch.apiBase !== undefined)) {
+                  const existingVal = nextProviders[provider];
+                  const existing: ProviderConfigSlot =
+                    existingVal && typeof existingVal === "object" ? existingVal : {};
+                  const merged: ProviderConfigSlot = { ...existing };
+                  if (patch.apiKey !== undefined) merged.apiKey = patch.apiKey;
+                  if (patch.apiBase !== undefined) merged.apiBase = patch.apiBase;
+                  nextProviders[provider] = merged;
+                }
+                update({ providers: nextProviders });
               }}
             />
           </div>
