@@ -184,6 +184,21 @@ class TestUpdateColumn:
         )
         assert resp.status_code == 400
 
+    def test_update_ignores_explicit_null_fields(self, client: TestClient, admin_headers):
+        """Clients that send ``{"title": null}`` should no-op that field, not 500."""
+        plan = _create_plan(client, admin_headers)
+        col = plan["columns"][0]
+        resp = client.put(
+            f"/api/plans/{plan['id']}/columns/{col['id']}",
+            headers=admin_headers,
+            json={"title": None, "kind": None, "position": None},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["title"] == col["title"]
+        assert body["kind"] == col["kind"]
+        assert body["position"] == col["position"]
+
     def test_update_missing_column_returns_404(self, client: TestClient, admin_headers):
         plan = _create_plan(client, admin_headers)
         resp = client.put(
