@@ -549,6 +549,40 @@ export function useAddTask(planId: string) {
   });
 }
 
+export function useAddColumn(planId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: {
+      title: string;
+      kind?: import("./types").ColumnKind;
+      position?: number | null;
+    }) => api.plans.addColumn(planId, data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.plan(planId) }),
+  });
+}
+
+export function useUpdateColumn(planId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      columnId,
+      data,
+    }: {
+      columnId: string;
+      data: { title?: string; kind?: import("./types").ColumnKind; position?: number | null };
+    }) => api.plans.updateColumn(planId, columnId, data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.plan(planId) }),
+  });
+}
+
+export function useDeleteColumn(planId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (columnId: string) => api.plans.deleteColumn(planId, columnId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.plan(planId) }),
+  });
+}
+
 export function useUpdateTask(planId: string) {
   const qc = useQueryClient();
   return useMutation({
