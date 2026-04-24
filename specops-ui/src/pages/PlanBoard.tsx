@@ -1407,7 +1407,7 @@ export default function PlanBoard() {
                 )}
                 <div>
                   <div className="mb-2 flex items-center justify-between gap-2">
-                    <p className="flex items-center gap-1.5 text-sm font-semibold text-claude-text-primary"><SpecialAgentIcon className="h-4 w-4" />SpecialAgents</p>
+                    <p className="flex items-center gap-1.5 text-sm font-semibold text-claude-text-primary"><SpecialAgentIcon className="h-4 w-4" />Agents</p>
                     <Button
                       variant="secondary"
                       size="sm"

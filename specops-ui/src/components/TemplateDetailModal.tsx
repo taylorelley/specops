@@ -121,7 +121,7 @@ export default function TemplateDetailModal({
         }}
         className="rounded-lg bg-claude-accent px-4 py-1.5 text-sm font-medium text-white hover:bg-claude-accent-hover transition-colors"
       >
-        Create SpecialAgent →
+        Create Agent →
       </button>
     </>
   );

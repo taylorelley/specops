@@ -57,10 +57,10 @@ export default function CreateSpecialAgentModal({ open, onClose, initialTemplate
   }
 
   return (
-    <Modal open={open} onClose={onClose} title="Create SpecialAgent" icon={<SpecialAgentIcon className="h-4 w-4" />}>
+    <Modal open={open} onClose={onClose} title="Create Agent" icon={<SpecialAgentIcon className="h-4 w-4" />}>
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
-          <label className={css.label}>SpecialAgent Name</label>
+          <label className={css.label}>Agent Name</label>
           <input
             type="text"
             placeholder="e.g. code-reviewer"
@@ -91,13 +91,13 @@ export default function CreateSpecialAgentModal({ open, onClose, initialTemplate
             </div>
           </div>
           <p className="mt-1 text-xs text-claude-text-muted">
-            Pre-configures the specialagent with role-specific skills and settings
+            Pre-configures the agent with role-specific skills and settings
           </p>
         </div>
         <div>
           <label className={css.label}>Description</label>
           <textarea
-            placeholder="What does this specialagent do?"
+            placeholder="What does this agent do?"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             rows={2}
@@ -117,7 +117,7 @@ export default function CreateSpecialAgentModal({ open, onClose, initialTemplate
             disabled={!name.trim() || createSpecialAgent.isPending}
             className="rounded-lg bg-claude-accent px-4 py-1.5 text-sm font-medium text-white hover:bg-claude-accent-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
-            {createSpecialAgent.isPending ? "Creating…" : "Create SpecialAgent"}
+            {createSpecialAgent.isPending ? "Creating…" : "Create Agent"}
           </button>
         </div>
       </form>

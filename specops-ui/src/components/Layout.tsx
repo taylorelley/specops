@@ -37,7 +37,7 @@ export default function Layout() {
         </div>
 
         <nav className="space-y-0.5 px-1.5">
-          <NavLink to="/specialagents" className={linkClass} title="SpecialAgents">
+          <NavLink to="/specialagents" className={linkClass} title="Special Agents">
             <SpecialAgentIcon className="h-5 w-5 shrink-0" />
           </NavLink>
           <NavLink to="/plans" className={linkClass} title="Plans">

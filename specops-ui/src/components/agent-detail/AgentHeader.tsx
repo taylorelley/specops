@@ -52,7 +52,7 @@ export function AgentHeader({
   return (
     <div className="mb-6">
       <Breadcrumb items={[
-        { label: "SpecialAgents", to: "/specialagents" },
+        { label: "Special Agents", to: "/specialagents" },
         { label: agent?.name ?? "Agent" },
       ]} />
       

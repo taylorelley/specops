@@ -73,11 +73,11 @@ export default function Marketplace() {
 
   return (
     <PageContainer>
-      <PageHeader title="Marketplace" description="Browse specialagent templates, plan templates, skills, MCP servers, and software" />
+      <PageHeader title="Marketplace" description="Browse agent templates, plan templates, skills, MCP servers, and software" />
 
       <div className="flex rounded-lg border border-claude-border bg-claude-surface p-0.5 w-fit mb-6">
         <button className={tabClass("templates")} onClick={() => setTab("templates")}>
-          SpecialAgent Templates
+          Agent Templates
         </button>
         <button className={tabClass("plan-templates")} onClick={() => setTab("plan-templates")}>
           Plan Templates
@@ -293,7 +293,7 @@ function TemplatesTab({ templates, isLoading }: { templates: { value: string; la
             </p>
             <div className="mt-3 flex justify-end">
               <span className="text-xs text-claude-accent opacity-0 group-hover:opacity-100 transition-opacity font-medium">
-                Create SpecialAgent →
+                Create Agent →
               </span>
             </div>
           </button>
@@ -378,7 +378,7 @@ function SkillsTab() {
     <div className="space-y-4">
       <div className="flex items-start justify-between gap-4">
         <div className="flex items-center gap-2 text-sm text-claude-text-secondary max-w-2xl">
-          <span>Skills extend your specialagents with specialized capabilities. Powered by</span>
+          <span>Skills extend your agents with specialized capabilities. Powered by</span>
           <a
             href="https://agentskill.sh"
             target="_blank"
@@ -732,7 +732,7 @@ function McpTab() {
     <div className="space-y-4">
       <div className="flex items-start justify-between gap-4">
         <div className="flex items-center gap-2 text-sm text-claude-text-secondary max-w-2xl">
-          <span>MCP servers extend your specialagents with external tools. Powered by</span>
+          <span>MCP servers extend your agents with external tools. Powered by</span>
           <a
             href="https://registry.modelcontextprotocol.io"
             target="_blank"

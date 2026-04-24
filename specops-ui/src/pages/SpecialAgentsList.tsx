@@ -21,18 +21,18 @@ export default function SpecialAgentsList() {
   return (
     <PageContainer>
       <PageHeader
-        title="SpecialAgents"
+        title="Special Agents"
         icon={<SpecialAgentIcon className="h-5 w-5" />}
-        description="Create and manage your specialagents."
+        description="Create and manage your agents."
         action={
           <Button onClick={() => setModalOpen(true)}>
             <SpecialAgentIcon className="mr-1.5 h-4 w-4" color="white" />
-            Add SpecialAgent
+            Add Agent
           </Button>
         }
       />
 
-      <ListCard emptyMessage='No specialagents yet. Click "Add SpecialAgent" to create one.'>
+      <ListCard emptyMessage='No agents yet. Click "Add Agent" to create one.'>
         {specialagents.map((specialagent) => {
           const isRunning = specialagent.status === "running";
           const isTransitioning = specialagent.status === "provisioning" || specialagent.status === "connecting";

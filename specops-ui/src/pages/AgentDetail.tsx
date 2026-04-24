@@ -328,7 +328,7 @@ export default function AgentDetail() {
         />
       )}
       <Breadcrumb items={[
-        { label: "SpecialAgents", to: "/specialagents" },
+        { label: "Special Agents", to: "/specialagents" },
         { label: agent?.name ?? "Agent" },
       ]} />
       <div className="mb-6 flex items-center justify-between">
