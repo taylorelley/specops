@@ -99,6 +99,7 @@ ignore = [
 "tests/test_specops_domain.py" = ["PLC0415"]
 "tests/test_plan_templates.py" = ["PLC0415"]
 "tests/test_plan_review.py" = ["PLC0415"]
+"tests/test_plan_columns.py" = ["PLC0415"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

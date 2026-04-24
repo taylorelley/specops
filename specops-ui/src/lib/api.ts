@@ -292,6 +292,17 @@ export const api = {
     get: (id: string) => request<import("./types").Plan>(`/plans/${id}`),
     update: (id: string, data: Partial<import("./types").Plan>) => put<import("./types").Plan>(`/plans/${id}`, data),
     delete: (id: string) => request<{ ok: boolean }>(`/plans/${id}`, { method: "DELETE" }),
+    addColumn: (
+      planId: string,
+      data: { title: string; kind?: import("./types").ColumnKind; position?: number | null },
+    ) => post<import("./types").PlanColumn>(`/plans/${planId}/columns`, data),
+    updateColumn: (
+      planId: string,
+      columnId: string,
+      data: { title?: string; kind?: import("./types").ColumnKind; position?: number | null },
+    ) => put<import("./types").PlanColumn>(`/plans/${planId}/columns/${columnId}`, data),
+    deleteColumn: (planId: string, columnId: string) =>
+      request<{ ok: boolean }>(`/plans/${planId}/columns/${columnId}`, { method: "DELETE" }),
     addTask: (planId: string, data: { column_id: string; title?: string; description?: string; agent_id?: string }) =>
       post<import("./types").PlanTask>(`/plans/${planId}/tasks`, data),
     updateTask: (planId: string, taskId: string, data: Partial<import("./types").PlanTask>) =>

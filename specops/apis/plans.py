@@ -60,6 +60,26 @@ class PlanUpdate(BaseModel):
     status: str | None = None
 
 
+class ColumnCreate(BaseModel):
+    """Body for POST /api/plans/{plan_id}/columns. Creates a new column on a plan."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    title: str
+    kind: Literal["standard", "review"] = "standard"
+    position: int | None = None
+
+
+class ColumnUpdate(BaseModel):
+    """Body for PUT /api/plans/{plan_id}/columns/{column_id}. All fields optional."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    title: str | None = None
+    kind: Literal["standard", "review"] | None = None
+    position: int | None = None
+
+
 class TaskCreate(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -358,6 +378,113 @@ def delete_plan(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found")
     artifact_store.delete_all_for_plan(plan_id)
     return {"ok": True}
+
+
+# Columns may only be added/edited/removed while a plan is still being shaped —
+# i.e. not actively running agents or already finished. This keeps the board
+# stable for running plans.
+_COLUMN_EDITABLE_STATUSES = {"draft", "paused"}
+
+
+def _require_column_editable(plan) -> None:
+    if plan.status not in _COLUMN_EDITABLE_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Plan is {plan.status}; columns can only be modified while the "
+                "plan is in draft or paused state."
+            ),
+        )
+
+
+@router.post("/api/plans/{plan_id}/columns")
+def add_column(
+    plan_id: str,
+    body: ColumnCreate,
+    caller: dict = Depends(get_current_user),
+    store: PlanStore = Depends(get_plan_store),
+    share_store: ShareStore = Depends(get_share_store),
+):
+    """Append a new column to a plan. Humans only; plan must be draft or paused."""
+    plan = store.get_plan(plan_id)
+    if not plan:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found")
+    require_plan_write({"type": "user", **caller}, plan, share_store)
+    _require_column_editable(plan)
+    title = (body.title or "").strip()
+    if not title:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Column title is required"
+        )
+    column = store.add_column(plan_id, title=title, kind=body.kind, position=body.position)
+    if not column:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create column"
+        )
+    return column.model_dump()
+
+
+@router.put("/api/plans/{plan_id}/columns/{column_id}")
+def update_column(
+    plan_id: str,
+    column_id: str,
+    body: ColumnUpdate,
+    caller: dict = Depends(get_current_user),
+    store: PlanStore = Depends(get_plan_store),
+    share_store: ShareStore = Depends(get_share_store),
+):
+    """Edit a column's title, kind, or position. Humans only; draft or paused plans only."""
+    plan = store.get_plan(plan_id)
+    if not plan:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found")
+    require_plan_write({"type": "user", **caller}, plan, share_store)
+    _require_column_editable(plan)
+    if body.title is not None and not body.title.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Column title cannot be empty"
+        )
+    kwargs = body.model_dump(exclude_unset=True)
+    kwargs = {k: v for k, v in kwargs.items() if v is not None}
+    if "title" in kwargs:
+        kwargs["title"] = kwargs["title"].strip()
+    column = store.update_column(plan_id, column_id, **kwargs)
+    if not column:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Column not found")
+    return column.model_dump()
+
+
+@router.delete("/api/plans/{plan_id}/columns/{column_id}")
+def delete_column(
+    plan_id: str,
+    column_id: str,
+    caller: dict = Depends(get_current_user),
+    store: PlanStore = Depends(get_plan_store),
+    share_store: ShareStore = Depends(get_share_store),
+):
+    """Remove a column from a plan. Fails if tasks still reference it."""
+    plan = store.get_plan(plan_id)
+    if not plan:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found")
+    require_plan_write({"type": "user", **caller}, plan, share_store)
+    _require_column_editable(plan)
+    ok, reason = store.delete_column(plan_id, column_id)
+    if ok:
+        return {"ok": True}
+    if reason == "column_not_found":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Column not found")
+    if reason == "last_column":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cannot delete the last column on a plan",
+        )
+    if reason == "column_not_empty":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Column still has tasks; move or delete them first",
+        )
+    raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete column"
+    )
 
 
 @router.post("/api/plans/{plan_id}/tasks")

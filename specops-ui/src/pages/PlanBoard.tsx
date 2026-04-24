@@ -31,6 +31,7 @@ import {
   useDeleteArtifact,
   useRenameArtifact,
   useMoveArtifact,
+  useDeleteColumn,
 } from "../lib/queries";
 import { api, getApiBase } from "../lib/api";
 import { useAuth } from "../contexts/AuthContext";
@@ -41,6 +42,7 @@ import CreateTaskModal from "../components/CreateTaskModal";
 import EditTaskModal from "../components/EditTaskModal";
 import TaskDetailModal from "../components/TaskDetailModal";
 import SharesPanel from "../components/SharesPanel";
+import ColumnEditorModal from "../components/ColumnEditorModal";
 
 marked.setOptions({ breaks: true, gfm: true });
 
@@ -565,6 +567,10 @@ function KanbanColumn({
   onOpenCreateTask,
   onViewTask,
   onEditTask,
+  editable,
+  taskCount,
+  onEditColumn,
+  onDeleteColumn,
 }: {
   column: PlanColumnType;
   planId: string;
@@ -574,6 +580,10 @@ function KanbanColumn({
   onOpenCreateTask: (columnId: string, columnTitle: string) => void;
   onViewTask: (task: PlanTaskType) => void;
   onEditTask: (task: PlanTaskType) => void;
+  editable: boolean;
+  taskCount: number;
+  onEditColumn: (column: PlanColumnType) => void;
+  onDeleteColumn: (column: PlanColumnType) => void;
 }) {
   const [over, setOver] = useState(false);
 
@@ -614,18 +624,45 @@ function KanbanColumn({
       } ${over ? "bg-claude-accent/5" : ""} ${isReview ? "bg-amber-50/30 dark:bg-amber-950/10" : ""}`}
     >
       <h3
-        className={`shrink-0 border-b px-4 py-2.5 text-xs font-semibold uppercase tracking-wide ${
+        className={`shrink-0 border-b px-4 py-2.5 text-xs font-semibold uppercase tracking-wide flex items-center justify-between gap-2 ${
           isReview
-            ? "border-amber-400/50 text-amber-700 dark:text-amber-300 flex items-center justify-between"
+            ? "border-amber-400/50 text-amber-700 dark:text-amber-300"
             : "border-claude-border text-claude-text-muted"
         }`}
       >
-        <span>{column.title}</span>
-        {isReview ? (
-          <span className="rounded-full bg-amber-200/60 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-amber-800 dark:bg-amber-900/60 dark:text-amber-200">
-            Review gate
-          </span>
-        ) : null}
+        <span className="truncate">{column.title}</span>
+        <div className="flex items-center gap-1 shrink-0">
+          {isReview ? (
+            <span className="rounded-full bg-amber-200/60 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-amber-800 dark:bg-amber-900/60 dark:text-amber-200">
+              Review gate
+            </span>
+          ) : null}
+          {editable ? (
+            <>
+              <button
+                type="button"
+                onClick={() => onEditColumn(column)}
+                className="rounded p-0.5 text-claude-text-muted hover:bg-claude-surface hover:text-claude-accent transition-colors"
+                title="Edit column"
+              >
+                <PencilIcon className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => onDeleteColumn(column)}
+                disabled={taskCount > 0}
+                className="rounded p-0.5 text-claude-text-muted hover:bg-red-50 dark:hover:bg-red-950/40 hover:text-red-600 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                title={
+                  taskCount > 0
+                    ? "Move or delete tasks before removing this column"
+                    : "Delete column"
+                }
+              >
+                <TrashIcon className="h-3.5 w-3.5" />
+              </button>
+            </>
+          ) : null}
+        </div>
       </h3>
       <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-3">
         {tasks.map((task) => (
@@ -1199,6 +1236,9 @@ export default function PlanBoard() {
   const [createTaskColumn, setCreateTaskColumn] = useState<{ columnId: string; columnTitle: string } | null>(null);
   const [viewTask, setViewTask] = useState<PlanTaskType | null>(null);
   const [editTask, setEditTask] = useState<PlanTaskType | null>(null);
+  const [columnEditorOpen, setColumnEditorOpen] = useState(false);
+  const [editingColumn, setEditingColumn] = useState<PlanColumnType | null>(null);
+  const deleteColumn = useDeleteColumn(planId ?? "");
   type RunPanelTab = "general" | "timeline";
   const [runPanelTab, setRunPanelTab] = useState<RunPanelTab>("general");
   const updateTask = useUpdateTask(planId ?? "");
@@ -1269,6 +1309,23 @@ export default function PlanBoard() {
   }
 
   const unassignedCount = (plan.tasks ?? []).filter((t) => !t.agent_id).length;
+  const columnsEditable = plan.status === "draft" || plan.status === "paused";
+
+  const handleDeleteColumn = (col: PlanColumnType) => {
+    const count = (plan.tasks ?? []).filter((t) => t.column_id === col.id).length;
+    if (count > 0) {
+      window.alert(
+        `Column "${col.title}" still has ${count} task${count !== 1 ? "s" : ""}. Move or delete them before removing the column.`,
+      );
+      return;
+    }
+    if (!window.confirm(`Delete column "${col.title}"?`)) return;
+    deleteColumn.mutate(col.id, {
+      onError: (err) => {
+        window.alert(err instanceof Error ? err.message : "Failed to delete column");
+      },
+    });
+  };
 
   const activateError = activatePlan.error as
     | (Error & {
@@ -1424,19 +1481,43 @@ export default function PlanBoard() {
         {/* Left: Kanban */}
         <div className="flex min-w-0 flex-col rounded-xl border border-claude-border bg-claude-surface/30 overflow-hidden" style={{ width: `${splitPct}%` }}>
           <div className="flex flex-1 overflow-auto">
-            {(plan.columns ?? []).sort((a, b) => a.position - b.position).map((col) => (
-              <KanbanColumn
-                key={col.id}
-                column={col}
-                planId={planId}
-                tasks={(plan.tasks ?? []).filter((t) => t.column_id === col.id).sort((a, b) => a.position - b.position)}
-                agents={specialagents.map((c) => ({ id: c.id, name: c.name }))}
-                onDrop={handleDrop}
-                onOpenCreateTask={(columnId, columnTitle) => setCreateTaskColumn({ columnId, columnTitle })}
-                onViewTask={setViewTask}
-                onEditTask={setEditTask}
-              />
-            ))}
+            {(plan.columns ?? []).sort((a, b) => a.position - b.position).map((col) => {
+              const columnTasks = (plan.tasks ?? []).filter((t) => t.column_id === col.id);
+              return (
+                <KanbanColumn
+                  key={col.id}
+                  column={col}
+                  planId={planId}
+                  tasks={columnTasks.sort((a, b) => a.position - b.position)}
+                  agents={specialagents.map((c) => ({ id: c.id, name: c.name }))}
+                  onDrop={handleDrop}
+                  onOpenCreateTask={(columnId, columnTitle) => setCreateTaskColumn({ columnId, columnTitle })}
+                  onViewTask={setViewTask}
+                  onEditTask={setEditTask}
+                  editable={columnsEditable}
+                  taskCount={columnTasks.length}
+                  onEditColumn={(c) => {
+                    setEditingColumn(c);
+                    setColumnEditorOpen(true);
+                  }}
+                  onDeleteColumn={handleDeleteColumn}
+                />
+              );
+            })}
+            {columnsEditable && (
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingColumn(null);
+                  setColumnEditorOpen(true);
+                }}
+                className="flex w-40 shrink-0 flex-col items-center justify-center gap-1 border-r border-claude-border text-xs font-medium text-claude-text-muted transition-colors hover:bg-claude-surface hover:text-claude-accent"
+                title="Add column"
+              >
+                <span className="text-lg leading-none">+</span>
+                Add column
+              </button>
+            )}
           </div>
         </div>
 
@@ -1582,6 +1663,16 @@ export default function PlanBoard() {
         assignedIds={plan.agent_ids ?? []}
         onAssign={(agentId) => assignAgent.mutate(agentId)}
         onRemove={(agentId) => removeAgent.mutate(agentId)}
+      />
+
+      <ColumnEditorModal
+        open={columnEditorOpen}
+        onClose={() => {
+          setColumnEditorOpen(false);
+          setEditingColumn(null);
+        }}
+        planId={planId}
+        column={editingColumn}
       />
 
       <Modal

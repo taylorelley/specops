@@ -5,11 +5,13 @@ from datetime import datetime, timezone
 
 from specops.core.database import Database
 from specops.core.domain.plan import (
+    ColumnKind,
     PlanColumn,
     PlanDef,
     PlanTask,
     TaskComment,
     _default_plan_columns,
+    _slugify_column_title,
     columns_from_template,
 )
 from specops.core.store.base import BaseRepository
@@ -332,6 +334,113 @@ class PlanStore(BaseRepository[PlanDef]):
 
     def delete_plan(self, plan_id: str) -> bool:
         return self.delete(plan_id)
+
+    def _next_column_id(self, plan_id: str, title: str, existing_ids: set[str]) -> str:
+        """Generate a unique column id following the ``{plan_id}-col-{slug}`` convention."""
+        base_slug = _slugify_column_title(title)
+        slug = base_slug
+        suffix = 2
+        candidate = f"{plan_id}-col-{slug}"
+        while candidate in existing_ids:
+            slug = f"{base_slug}-{suffix}"
+            candidate = f"{plan_id}-col-{slug}"
+            suffix += 1
+        return candidate
+
+    def add_column(
+        self,
+        plan_id: str,
+        title: str,
+        *,
+        kind: ColumnKind = "standard",
+        position: int | None = None,
+    ) -> PlanColumn | None:
+        """Append a new column to a plan. Returns None if the plan does not exist."""
+        plan = self.get_plan(plan_id)
+        if not plan:
+            return None
+        existing_ids = {c.id for c in plan.columns}
+        col_id = self._next_column_id(plan_id, title, existing_ids)
+        resolved_position = (
+            position
+            if position is not None
+            else (max((c.position for c in plan.columns), default=-1) + 1)
+        )
+        resolved_kind: ColumnKind = "review" if kind == "review" else "standard"
+        column = PlanColumn(id=col_id, title=title, position=resolved_position, kind=resolved_kind)
+        with self._db.connection() as conn:
+            conn.execute(
+                "INSERT INTO plan_columns (id, plan_id, title, position, kind) VALUES (?, ?, ?, ?, ?)",
+                (column.id, plan_id, column.title, column.position, column.kind),
+            )
+            conn.execute(
+                "UPDATE plans SET updated_at = ? WHERE id = ?",
+                (datetime.now(timezone.utc).isoformat(), plan_id),
+            )
+        return column
+
+    def update_column(
+        self,
+        plan_id: str,
+        column_id: str,
+        *,
+        title: str | None = None,
+        kind: ColumnKind | None = None,
+        position: int | None = None,
+    ) -> PlanColumn | None:
+        """Update a column's title, kind, or position. Column id is not changed."""
+        plan = self.get_plan(plan_id)
+        if not plan:
+            return None
+        column = next((c for c in plan.columns if c.id == column_id), None)
+        if not column:
+            return None
+        if title is not None:
+            column.title = title
+        if kind is not None:
+            column.kind = "review" if kind == "review" else "standard"
+        if position is not None:
+            column.position = int(position)
+        with self._db.connection() as conn:
+            conn.execute(
+                "UPDATE plan_columns SET title = ?, kind = ?, position = ? WHERE id = ? AND plan_id = ?",
+                (column.title, column.kind, column.position, column.id, plan_id),
+            )
+            conn.execute(
+                "UPDATE plans SET updated_at = ? WHERE id = ?",
+                (datetime.now(timezone.utc).isoformat(), plan_id),
+            )
+        return column
+
+    def delete_column(self, plan_id: str, column_id: str) -> tuple[bool, str]:
+        """Delete a column. Returns (deleted, reason).
+
+        Refuses to delete if tasks still reference the column, or if it is the
+        last column on the plan. The caller should move tasks to a different
+        column first.
+        """
+        plan = self.get_plan(plan_id)
+        if not plan:
+            return False, "plan_not_found"
+        column = next((c for c in plan.columns if c.id == column_id), None)
+        if not column:
+            return False, "column_not_found"
+        if len(plan.columns) <= 1:
+            return False, "last_column"
+        task_count = sum(1 for t in plan.tasks if t.column_id == column_id)
+        if task_count > 0:
+            return False, "column_not_empty"
+        with self._db.connection() as conn:
+            cursor = conn.execute(
+                "DELETE FROM plan_columns WHERE id = ? AND plan_id = ?",
+                (column_id, plan_id),
+            )
+            if cursor.rowcount > 0:
+                conn.execute(
+                    "UPDATE plans SET updated_at = ? WHERE id = ?",
+                    (datetime.now(timezone.utc).isoformat(), plan_id),
+                )
+            return cursor.rowcount > 0, "deleted" if cursor.rowcount > 0 else "column_not_found"
 
     def add_task(
         self,
