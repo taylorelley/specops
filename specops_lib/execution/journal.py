@@ -54,6 +54,28 @@ class JournalLookup(ABC):
         re-run.
         """
 
+    async def find_hitl_resolved(
+        self,
+        execution_id: str,
+        guardrail_name: str,
+        tool_name: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Return the most recent ``hitl_resolved`` event matching the
+        guardrail (and optional tool name) for the given execution, or
+        ``None``.
+
+        ``tool_name`` is the disambiguator for the synthesised
+        ``legacy_approval`` guardrail — every tool with an
+        ``ask_before_run`` mode shares that name, so resolving for
+        tool A must not silently unblock tool B. Pass ``None`` to
+        match any tool.
+
+        Phase 4 uses this on the resume path so an already-resolved
+        guardrail doesn't re-pause when the LLM re-emits the same tool
+        call. The default is ``None`` — concrete lookups override.
+        """
+        return None
+
 
 class Journal(JournalLookup):
     """Full journal interface, write + read.
@@ -117,6 +139,9 @@ class LocalJournalLookup(JournalLookup):
         self._logs_path = Path(logs_path) if logs_path else None
         # (execution_id, idempotency_key, event_kind) -> last matching event payload
         self._index: dict[tuple[str, str, str], dict[str, Any]] = {}
+        # (execution_id, guardrail_name, tool_name_or_empty) -> last hitl_resolved row
+        # (parsed payload merged in). Empty tool_name slot acts as a wildcard.
+        self._hitl_index: dict[tuple[str, str, str], dict[str, Any]] = {}
         self._mtimes: dict[str, float] = {}
         self._loaded = False
 
@@ -127,6 +152,7 @@ class LocalJournalLookup(JournalLookup):
 
     def _load(self) -> None:
         self._index.clear()
+        self._hitl_index.clear()
         self._mtimes.clear()
         for path in self._files():
             if not path.exists():
@@ -142,14 +168,36 @@ class LocalJournalLookup(JournalLookup):
                     except json.JSONDecodeError:
                         continue
                     exec_id = data.get("execution_id")
-                    idem = data.get("idempotency_key")
                     kind = data.get("event_kind")
-                    if not exec_id or not idem or not kind:
+                    if not exec_id or not kind:
+                        continue
+                    if kind == "hitl_resolved":
+                        payload = self._parse_payload(data.get("payload_json"))
+                        gname = str(payload.get("guardrail") or "")
+                        tname = str(payload.get("tool_name") or "")
+                        if gname:
+                            merged = {**data, **payload}
+                            self._hitl_index[(exec_id, gname, tname)] = merged
+                        continue
+                    idem = data.get("idempotency_key")
+                    if not idem:
                         continue
                     self._index[(exec_id, idem, kind)] = data
             except OSError:
                 continue
         self._loaded = True
+
+    @staticmethod
+    def _parse_payload(raw: Any) -> dict[str, Any]:
+        if isinstance(raw, dict):
+            return raw
+        if isinstance(raw, str) and raw:
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError:
+                return {}
+            return parsed if isinstance(parsed, dict) else {}
+        return {}
 
     def _refresh_if_changed(self) -> None:
         if not self._logs_path:
@@ -184,3 +232,20 @@ class LocalJournalLookup(JournalLookup):
         else:
             self._refresh_if_changed()
         return self._index.get((execution_id, idempotency_key, "tool_call"))
+
+    async def find_hitl_resolved(
+        self,
+        execution_id: str,
+        guardrail_name: str,
+        tool_name: str | None = None,
+    ) -> dict[str, Any] | None:
+        if not self._loaded:
+            self._load()
+        else:
+            self._refresh_if_changed()
+        if tool_name:
+            hit = self._hitl_index.get((execution_id, guardrail_name, tool_name))
+            if hit is not None:
+                return hit
+        # Wildcard fallback: an event without a tool_name applies to any.
+        return self._hitl_index.get((execution_id, guardrail_name, ""))

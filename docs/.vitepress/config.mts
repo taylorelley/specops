@@ -27,6 +27,7 @@ export default defineConfig({
             { text: "Plans", link: "/guide/plans" },
             { text: "API Tools", link: "/guide/api-tools" },
             { text: "Guardrails", link: "/guide/guardrails" },
+            { text: "Human-in-the-Loop", link: "/guide/hitl" },
             { text: "Security", link: "/guide/security" },
           ],
         },

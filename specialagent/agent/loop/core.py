@@ -155,7 +155,7 @@ class AgentLoop:
         var_lookup = dict(secrets.env or {})
         api_tool_cache_dir = self._file_service.config_path.parent / "api-tools"
 
-        guardrail_runner = GuardrailRunner(on_event=on_event)
+        guardrail_runner = GuardrailRunner(on_event=on_event, journal_lookup=self._journal_lookup)
         # Bridge ToolApprovalConfig → escalate guardrails so legacy YAML
         # keeps working without schema change.
         registry = default_registry()

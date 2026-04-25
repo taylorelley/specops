@@ -31,6 +31,10 @@ export const queryKeys = {
   apiTools: (q: string) => ["api-tools", "search", q] as const,
   customApiTools: ["api-tools", "custom"] as const,
   agentApiTools: (id: string) => ["agents", id, "api-tools"] as const,
+  executions: (status?: string) => ["executions", "global", status ?? "all"] as const,
+  agentExecutions: (id: string, status?: string) =>
+    ["agents", id, "executions", status ?? "all"] as const,
+  executionEvents: (id: string) => ["executions", id, "events"] as const,
 };
 
 export function useTemplates() {
@@ -893,6 +897,52 @@ export function useUninstallApiTool(agentId: string) {
     mutationFn: (specId: string) => api.apiTools.uninstall(agentId, specId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.agentApiTools(agentId) });
+    },
+  });
+}
+
+export function useExecutionsGlobal(status?: string) {
+  return useQuery({
+    queryKey: queryKeys.executions(status),
+    queryFn: () => api.executions.listGlobal(status),
+    staleTime: 5_000,
+    refetchInterval: status === "paused" ? 5_000 : undefined,
+  });
+}
+
+export function useExecutionsForAgent(agentId: string | undefined, status?: string) {
+  return useQuery({
+    queryKey: queryKeys.agentExecutions(agentId ?? "", status),
+    queryFn: () => api.executions.listForAgent(agentId!, status),
+    enabled: !!agentId,
+    staleTime: 10_000,
+  });
+}
+
+export function useExecutionEvents(executionId: string | undefined) {
+  return useQuery({
+    queryKey: queryKeys.executionEvents(executionId ?? ""),
+    queryFn: () => api.executions.events(executionId!),
+    enabled: !!executionId,
+    staleTime: 5_000,
+  });
+}
+
+export function useResolveExecution() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      executionId,
+      decision,
+      note,
+    }: {
+      executionId: string;
+      decision: import("./types").ResolveDecision;
+      note?: string;
+    }) => api.executions.resolve(executionId, { decision, note }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["executions", "global"] });
+      qc.invalidateQueries({ queryKey: ["agents"] });
     },
   });
 }

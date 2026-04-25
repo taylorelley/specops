@@ -426,3 +426,37 @@ export type AgentApiToolEntry = {
   enabled_operations?: string[] | null;
   role_hint?: string;
 };
+
+export type Execution = {
+  id: string;
+  agent_id: string;
+  plan_id?: string;
+  session_key?: string;
+  channel?: string;
+  chat_id?: string;
+  status: "running" | "paused" | "failed" | "completed";
+  last_step_id?: string;
+  error_message?: string;
+  pending_resume?: number;
+  created_at: string;
+  updated_at: string;
+  paused_at?: string;
+};
+
+export type ExecutionEvent = {
+  id: number;
+  execution_id: string;
+  event_id: string;
+  step_id?: string;
+  event_kind: string;
+  replay_safety?: string | null;
+  idempotency_key?: string | null;
+  tool_name?: string | null;
+  result_status?: string | null;
+  duration_ms?: number | null;
+  payload_json?: string | null;
+  timestamp: string;
+  agent_id?: string;
+};
+
+export type ResolveDecision = "approve" | "reject";

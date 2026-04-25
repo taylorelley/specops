@@ -265,6 +265,8 @@ async def control_ws(websocket: WebSocket) -> None:
                             execution_events_store.insert(ev)
                         if executions_store and ev.event_kind == "step_completed":
                             executions_store.set_last_step(ev.execution_id, ev.step_id or "")
+                        if executions_store and ev.event_kind == "hitl_waiting":
+                            executions_store.mark_paused(ev.execution_id)
                     if inserted:
                         log.emit(ev)
     except WebSocketDisconnect:

@@ -150,6 +150,32 @@ Configure your log aggregator to capture this logger for security monitoring.
 
 ---
 
+## Approval & Audit
+
+SpecOps gates side-effecting tools through guardrails (Phase 3) and a
+durable Human-in-the-Loop pause (Phase 4). When an `escalate`
+guardrail fires:
+
+- The worker emits a `hitl_waiting` event into the durable execution
+  journal (`execution_events` table).
+- The control plane sets `executions.status = "paused"`.
+- The execution is listed at
+  `GET /api/executions?status=paused` and rendered in the
+  **Pending Approvals** sidebar item.
+- A human approves or rejects via
+  `POST /api/executions/{id}/resolve`. The decision is journaled and
+  surfaced in the audit log.
+- A fresh worker spun up after the resolve sees the prior decision in
+  the journal and short-circuits the guardrail — the same tool isn't
+  paused twice.
+
+Every guardrail decision (pass or fail) emits a `guardrail_result`
+event so audits can trace who blocked what and why. See
+[Guardrails](./guardrails.md) and
+[Human-in-the-Loop](./hitl.md) for the full model.
+
+---
+
 ## Known Limitations
 
 - API keys in config are stored in plain text (no keyring by default)

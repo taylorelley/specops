@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from typing import Any
 
@@ -113,6 +114,41 @@ class ExecutionEventsStore:
             ).fetchone()
             return _row_to_dict(row) if row else None
 
+    def find_hitl_resolved(
+        self,
+        execution_id: str,
+        guardrail_name: str,
+        tool_name: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Return the most recent ``hitl_resolved`` event matching the
+        guardrail (and optional tool name) or ``None``.
+
+        ``tool_name`` disambiguates the shared ``legacy_approval``
+        guardrail name across multiple pending approvals. Pass ``None``
+        to match any tool.
+        """
+        if not guardrail_name:
+            return None
+        with self._db.connection() as conn:
+            rows = conn.execute(
+                """SELECT * FROM execution_events
+                   WHERE execution_id = ? AND event_kind = 'hitl_resolved'
+                   ORDER BY id DESC""",
+                (execution_id,),
+            ).fetchall()
+        wildcard: dict[str, Any] | None = None
+        for row in rows:
+            payload = _parse_payload(row["payload_json"])
+            if payload.get("guardrail") != guardrail_name:
+                continue
+            row_tool = payload.get("tool_name") or ""
+            merged = {**_row_to_dict(row), **payload}
+            if tool_name and row_tool == tool_name:
+                return merged
+            if not row_tool and wildcard is None:
+                wildcard = merged
+        return wildcard
+
 
 def _row_to_dict(row) -> dict[str, Any]:
     return {
@@ -130,6 +166,18 @@ def _row_to_dict(row) -> dict[str, Any]:
         "timestamp": row["timestamp"],
         "agent_id": row["agent_id"] or "",
     }
+
+
+def _parse_payload(raw: Any) -> dict[str, Any]:
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str) and raw:
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
 
 
 __all__ = ["ExecutionEventsStore"]

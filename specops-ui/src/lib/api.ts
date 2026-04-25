@@ -579,6 +579,49 @@ export const api = {
         method: "DELETE",
       }),
   },
+  executions: {
+    listGlobal: (status?: string, limit: number = 200) => {
+      const qs = new URLSearchParams();
+      if (status) qs.set("status", status);
+      qs.set("limit", String(limit));
+      return request<{ executions: import("./types").Execution[] }>(
+        `/executions?${qs.toString()}`,
+      );
+    },
+    listForAgent: (agentId: string, status?: string, limit: number = 100) => {
+      const qs = new URLSearchParams();
+      if (status) qs.set("status", status);
+      qs.set("limit", String(limit));
+      return request<{ executions: import("./types").Execution[] }>(
+        `/agents/${encodeURIComponent(agentId)}/executions?${qs.toString()}`,
+      );
+    },
+    get: (executionId: string) =>
+      request<import("./types").Execution>(
+        `/executions/${encodeURIComponent(executionId)}`,
+      ),
+    events: (executionId: string, afterId?: number, limit: number = 500) => {
+      const qs = new URLSearchParams();
+      if (afterId !== undefined) qs.set("after_id", String(afterId));
+      qs.set("limit", String(limit));
+      return request<{
+        execution_id: string;
+        events: import("./types").ExecutionEvent[];
+      }>(`/executions/${encodeURIComponent(executionId)}/events?${qs.toString()}`);
+    },
+    resolve: (
+      executionId: string,
+      body: {
+        decision: import("./types").ResolveDecision;
+        note?: string;
+        approver_id?: string;
+      },
+    ) =>
+      post<{ ok: boolean; decision: string; resumed: boolean; queued?: boolean }>(
+        `/executions/${encodeURIComponent(executionId)}/resolve`,
+        body,
+      ),
+  },
   apiTools: {
     search: (q: string = "", limit: number = 50) =>
       request<import("./types").ApiToolEntry[]>(

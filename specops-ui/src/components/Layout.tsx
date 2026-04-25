@@ -1,11 +1,38 @@
 import { useState, useRef, useEffect } from "react";
 import { Outlet, NavLink, Link } from "react-router-dom";
 import { IoHomeOutline, IoMoonOutline, IoSunnyOutline } from "react-icons/io5";
+import { HiOutlineHandRaised } from "react-icons/hi2";
+import { useExecutionsGlobal } from "../lib/queries";
 import { useAuth } from "../contexts/AuthContext";
 import { useTheme } from "../contexts/ThemeContext";
 import { SpecialAgentIcon } from "./SpecialAgentIcon";
 import { PlanIcon, MarketplaceIcon } from "./ui";
 import specopsLogo from "../assets/specops.svg";
+
+function PendingApprovalsNav({
+  linkClass,
+}: {
+  linkClass: ({ isActive }: { isActive: boolean }) => string;
+}) {
+  const { data } = useExecutionsGlobal("paused");
+  const count = data?.executions?.length ?? 0;
+  return (
+    <NavLink
+      to="/approvals"
+      className={linkClass}
+      title={count > 0 ? `Pending Approvals (${count})` : "Pending Approvals"}
+    >
+      <span className="relative inline-flex">
+        <HiOutlineHandRaised className="h-5 w-5 shrink-0" />
+        {count > 0 && (
+          <span className="absolute -top-1 -right-1.5 inline-flex items-center justify-center rounded-full bg-claude-accent text-white text-[9px] min-w-[14px] h-[14px] px-1 leading-none">
+            {count > 9 ? "9+" : count}
+          </span>
+        )}
+      </span>
+    </NavLink>
+  );
+}
 
 export default function Layout() {
   const { user, logout } = useAuth();
@@ -49,6 +76,7 @@ export default function Layout() {
           <NavLink to="/marketplace" className={linkClass} title="Marketplace">
             <MarketplaceIcon className="h-5 w-5 shrink-0" />
           </NavLink>
+          <PendingApprovalsNav linkClass={linkClass} />
         </nav>
 
         <div ref={popRef} className="relative mt-auto pt-2 px-1.5">

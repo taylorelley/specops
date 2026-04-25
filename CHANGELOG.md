@@ -85,6 +85,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   time.
 
 ### Added (continued)
+- **Durable Human-in-the-Loop (Phase 4 of Agentspan idea adoption).**
+  Glue between Phase 1's journal and Phase 3's escalate guardrails.
+  When a guardrail fires `on_fail=escalate` the worker emits a
+  `hitl_waiting` event and the control plane flips
+  `executions.status = "paused"` automatically. A human resolves via
+  `POST /api/executions/{id}/resolve`
+  (`{decision: "approve"|"reject", note?, approver_id?}`); the
+  endpoint writes `hitl_resolved` into the journal, sets
+  `executions.status` to `running` (approve) or `failed` (reject),
+  and — if the worker is connected — sends `{type: "resume",
+  execution_id}` so it picks up where it left off. A fresh worker on
+  the same data root sees the resolution via `LocalJournalLookup`'s
+  new `find_hitl_resolved(execution_id, guardrail_name, tool_name?)`
+  and short-circuits the guardrail on replay so the same tool isn't
+  paused twice. New `GET /api/executions?status=paused` lists
+  cross-agent paused rows; new **Pending Approvals** sidebar item +
+  page renders them with one-click Approve / Reject (and a count
+  badge that auto-refreshes every 5s). The synthesised
+  `legacy_approval` guardrail carries `tool_name` in both
+  `hitl_waiting` and `hitl_resolved` payloads so resolving for tool
+  A never silently unblocks tool B in the same execution. Reject
+  forces `on_fail=raise` regardless of the configured mode.
+  Backwards-compatible: `ToolApprovalConfig` YAML continues to load;
+  the existing in-channel "yes/no" approval prompt UX is unchanged.
 - **Guardrail framework (Phase 3 of Agentspan idea adoption).** New
   `specops_lib/guardrails/` module with `Guardrail` base type,
   `GuardrailResult` / `OnFail` / `Position` literals, `@guardrail`

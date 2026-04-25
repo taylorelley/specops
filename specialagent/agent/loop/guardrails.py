@@ -21,6 +21,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Mapping
 
+from specops_lib.execution import JournalLookup
 from specops_lib.guardrails import (
     CallableGuardrail,
     Guardrail,
@@ -207,8 +208,10 @@ class GuardrailRunner:
         self,
         *,
         on_event: Callable[..., Awaitable[None]] | None = None,
+        journal_lookup: JournalLookup | None = None,
     ) -> None:
         self._on_event = on_event
+        self._journal = journal_lookup
         # Per-(step, guardrail) retry counters; reset by caller between turns.
         self._retries: dict[tuple[str, str], int] = {}
 
@@ -242,6 +245,39 @@ class GuardrailRunner:
             guardrail's reason in ``pause_payload``.
         """
         for g in guardrails:
+            # Resume short-circuit: if a human has already approved this
+            # (execution_id, guardrail, tool) triple via /resolve, skip
+            # the check. If they rejected it, propagate as a hard raise
+            # regardless of the configured on_fail.
+            prior = await self._lookup_prior_resolution(execution_id, g.name, tool_name)
+            if prior is not None:
+                decision = str(prior.get("decision") or "")
+                if decision == "approve":
+                    await self._emit_result_event(
+                        gname=g.name,
+                        position=position,
+                        tool_name=tool_name,
+                        result=GuardrailResult(passed=True, message="resumed: approved"),
+                        execution_id=execution_id,
+                        step_id=step_id,
+                        plan_id=plan_id,
+                    )
+                    continue
+                if decision == "reject":
+                    note = str(prior.get("note") or "")
+                    msg = f"Approval rejected by human{f': {note}' if note else ''}."
+                    await self._emit_result_event(
+                        gname=g.name,
+                        position=position,
+                        tool_name=tool_name,
+                        result=GuardrailResult(passed=False, message=msg),
+                        execution_id=execution_id,
+                        step_id=step_id,
+                        plan_id=plan_id,
+                    )
+                    return EnforcementOutcome(
+                        decision="raise", error_message=msg, guardrail_name=g.name
+                    )
             result = await self._check_one(g, content, position, tool_name, args)
             await self._emit_result_event(
                 gname=g.name,
@@ -265,6 +301,25 @@ class GuardrailRunner:
                 plan_id=plan_id,
             )
         return EnforcementOutcome(decision="pass", content=content)
+
+    async def _lookup_prior_resolution(
+        self,
+        execution_id: str | None,
+        guardrail_name: str,
+        tool_name: str | None,
+    ) -> dict[str, Any] | None:
+        if not self._journal or not execution_id:
+            return None
+        try:
+            return await self._journal.find_hitl_resolved(execution_id, guardrail_name, tool_name)
+        except Exception:
+            logger.exception(
+                "[guardrail] journal lookup failed for %s/%s/%s",
+                execution_id,
+                guardrail_name,
+                tool_name,
+            )
+            return None
 
     async def _check_one(
         self,
