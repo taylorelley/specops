@@ -47,6 +47,12 @@ class Tool(ABC):
     #   half-completion; resume marks the execution failed.
     replay_safety: ClassVar[ReplaySafety] = "checkpoint"
 
+    # Default guardrails attached at the class level. Each item is a
+    # GuardrailRef-shaped dict (or pydantic model). Runtime config can
+    # extend (not replace) this list via ToolsConfig.guardrails or a
+    # per-tool override on OpenAPIToolConfig / MCPServerConfig.
+    guardrails: ClassVar[list[Any]] = []
+
     def compute_idempotency_key(self, args: dict[str, Any]) -> str | None:
         """Override to provide a tool-specific idempotency key.
 

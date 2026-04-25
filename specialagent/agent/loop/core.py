@@ -1,7 +1,7 @@
 """Agent loop: the core processing engine."""
 
 import asyncio
-from typing import Awaitable, Callable
+from typing import Any, Awaitable, Callable
 
 from loguru import logger
 
@@ -9,6 +9,12 @@ from specialagent.agent.agent_fs import AgentFS
 from specialagent.agent.approval import ToolApprovalManager
 from specialagent.agent.consolidator import MemoryConsolidator
 from specialagent.agent.context import ContextBuilder
+from specialagent.agent.loop.guardrails import (
+    GuardrailRunner,
+    _legacy_approval_guardrail,
+    resolve_refs,
+    synthesize_approval_guardrails,
+)
 from specialagent.agent.loop.mcp import McpManager
 from specialagent.agent.loop.session import SessionProcessor
 from specialagent.agent.loop.tools import ToolsManager
@@ -32,6 +38,17 @@ from specops_lib.config.schema import (
     ToolsConfig,
 )
 from specops_lib.execution import JournalLookup, LocalJournalLookup
+from specops_lib.guardrails import Guardrail, default_registry
+
+
+def _expand_prefix_keys(
+    tool_guardrails: dict[str, list[Guardrail]],
+) -> dict[str, list[Guardrail]]:
+    """Pass-through for now; ``ToolsManager.guardrails_for_tool`` handles
+    the prefix-match itself by looking up the exact tool name first
+    and falling back to a startswith() over the registered keys.
+    """
+    return tool_guardrails
 
 
 class AgentLoop:
@@ -138,6 +155,55 @@ class AgentLoop:
         var_lookup = dict(secrets.env or {})
         api_tool_cache_dir = self._file_service.config_path.parent / "api-tools"
 
+        guardrail_runner = GuardrailRunner(on_event=on_event)
+        # Bridge ToolApprovalConfig → escalate guardrails so legacy YAML
+        # keeps working without schema change.
+        registry = default_registry()
+        registry.register(_legacy_approval_guardrail())
+        approval_synth = synthesize_approval_guardrails(tools.approval)
+        # Per-tool resolved guardrails: agent-default + per-tool config overrides
+        # + synthesised approval refs + (later, at registration time) class-level Tool.guardrails.
+        default_refs = list(tools.guardrails or [])
+        default_tool_guardrails: list[Guardrail] = resolve_refs(default_refs, registry=registry)
+        per_tool_refs: dict[str, list[Any]] = {}
+        for tool_name, refs in approval_synth.items():
+            if tool_name == "__default__":
+                # Approval default-mode means every tool gets the synth.
+                default_tool_guardrails.extend(resolve_refs(refs, registry=registry))
+            else:
+                per_tool_refs.setdefault(tool_name, []).extend(refs)
+        # MCP server guardrails: each server's refs apply to every tool the
+        # server exposes (named ``mcp_<server>_<tool>`` at runtime).
+        for server_key, server_cfg in (tools.mcp_servers or {}).items():
+            server_refs = getattr(server_cfg, "guardrails", None) or []
+            if not server_refs:
+                continue
+            prefix = f"mcp_{server_key}_"
+            per_tool_refs.setdefault(prefix, []).extend(
+                ref.model_dump() if hasattr(ref, "model_dump") else dict(ref) for ref in server_refs
+            )
+        # OpenAPI tool guardrails: same shape — one prefix per spec.
+        for spec_id, ot_cfg in (tools.openapi_tools or {}).items():
+            ot_refs = getattr(ot_cfg, "guardrails", None) or []
+            if not ot_refs:
+                continue
+            prefix = f"api_{spec_id}_"
+            per_tool_refs.setdefault(prefix, []).extend(
+                ref.model_dump() if hasattr(ref, "model_dump") else dict(ref) for ref in ot_refs
+            )
+        tool_guardrails: dict[str, list[Guardrail]] = {
+            name: resolve_refs(refs, registry=registry) for name, refs in per_tool_refs.items()
+        }
+        # Agent-output guardrails come from agent.defaults.guardrails.
+        agent_output_refs = list(getattr(defaults, "guardrails", None) or [])
+        agent_output_guardrails: list[Guardrail] = resolve_refs(
+            agent_output_refs, registry=registry
+        )
+        self._guardrail_runner = guardrail_runner
+        self._tool_guardrails = tool_guardrails
+        self._default_tool_guardrails = default_tool_guardrails
+        self._agent_output_guardrails = agent_output_guardrails
+
         self._tools_manager = ToolsManager(
             tools=self.tools,
             mcp=self.mcp,
@@ -160,6 +226,9 @@ class AgentLoop:
             var_lookup=var_lookup,
             openapi_tools_config=dict(tools.openapi_tools or {}),
             api_tool_cache_dir=api_tool_cache_dir,
+            guardrail_runner=guardrail_runner,
+            tool_guardrails=_expand_prefix_keys(tool_guardrails),
+            default_tool_guardrails=default_tool_guardrails,
         )
         self._tools_manager.register_default_tools()
 
@@ -178,6 +247,8 @@ class AgentLoop:
             memory_window=self.memory_window,
             on_event=on_event,
             software_management=software_management,
+            guardrail_runner=guardrail_runner,
+            agent_output_guardrails=agent_output_guardrails,
         )
 
     # ── Hot-reload ────────────────────────────────────────────────────────────

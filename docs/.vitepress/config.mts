@@ -26,6 +26,7 @@ export default defineConfig({
             { text: "Channels", link: "/guide/channels" },
             { text: "Plans", link: "/guide/plans" },
             { text: "API Tools", link: "/guide/api-tools" },
+            { text: "Guardrails", link: "/guide/guardrails" },
             { text: "Security", link: "/guide/security" },
           ],
         },

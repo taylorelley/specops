@@ -41,6 +41,15 @@ export type SoftwareInstalledEntry = {
   verified?: boolean;
 };
 
+export type GuardrailRef = {
+  name: string;
+  on_fail?: "retry" | "raise" | "fix" | "escalate";
+  max_retries?: number;
+  pattern?: string | null;
+  prompt?: string | null;
+  regex_mode?: "block" | "allow";
+};
+
 export type ToolsCfg = {
   web: { search: { provider: "duckduckgo" | "brave" | "serpapi"; brave_api_key: string; serpapi_api_key: string; max_results: number } };
   exec: { timeout: number; policy?: { mode: "allow_all" | "deny_all" | "allowlist"; allow: string[]; deny: string[]; relaxed?: boolean } };
@@ -49,6 +58,7 @@ export type ToolsCfg = {
   mcp_servers: Record<string, MCPServer>;
   software?: Record<string, SoftwareInstalledEntry>;
   approval?: ApprovalCfg;
+  guardrails?: GuardrailRef[];
 };
 
 export type HeartbeatCfg = {

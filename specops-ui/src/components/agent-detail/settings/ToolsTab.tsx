@@ -2,7 +2,7 @@ import { useState } from "react";
 import { api } from "../../../lib/api";
 import { css, BUILTIN_TOOLS } from "../constants";
 import { Section, Toggle } from "../ui/Section";
-import type { Agent, ApprovalCfg, MCPConfigField, MCPServer, ToolsCfg } from "../types";
+import type { Agent, ApprovalCfg, GuardrailRef, MCPConfigField, MCPServer, ToolsCfg } from "../types";
 
 function ToolApprovalSection({ tools, setTools }: { tools: ToolsCfg; setTools: (t: ToolsCfg) => void }) {
   const approval = tools.approval ?? { default_mode: "always_run", per_tool: {}, timeout_seconds: 120 };
@@ -859,6 +859,87 @@ export function ToolsTab({ agentId, agent, updateTools, setTools, onSave }: { ag
       </Section>
 
       <ToolApprovalSection tools={tools} setTools={setTools} />
+
+      <GuardrailsSection tools={tools} mcpServers={mcpServers} />
     </div>
+  );
+}
+
+function GuardrailsSection({
+  tools,
+  mcpServers,
+}: {
+  tools: ToolsCfg;
+  mcpServers: Record<string, MCPServer & { guardrails?: GuardrailRef[] }>;
+}) {
+  const [open, setOpen] = useState(false);
+  const agentLevel = tools.guardrails ?? [];
+  const mcpAttached = Object.entries(mcpServers).flatMap(([name, srv]) =>
+    (srv.guardrails ?? []).map((g) => ({ ...g, attached_to: `MCP server '${name}'` })),
+  );
+  const total = agentLevel.length + mcpAttached.length;
+
+  return (
+    <Section title="Advanced: Guardrails">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-1.5 text-xs text-claude-text-muted hover:text-claude-text-secondary transition-colors mb-2"
+      >
+        <svg
+          className={`h-3 w-3 transition-transform ${open ? "rotate-90" : ""}`}
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+        </svg>
+        Configured guardrails ({total})
+      </button>
+      {open && (
+        <>
+          <p className="text-[11px] text-claude-text-muted mb-2">
+            Guardrails check tool inputs, tool outputs, and final agent
+            replies. Modes: <code>retry</code> feeds the message back to the
+            LLM; <code>raise</code> aborts; <code>fix</code> replaces the
+            output; <code>escalate</code> pauses for human approval. The
+            full list of available modes is documented in
+            docs/guide/guardrails.md. Editing UI is a follow-up — for now
+            edit the YAML or use the API.
+          </p>
+          {total === 0 ? (
+            <p className="text-xs text-claude-text-muted">
+              No guardrails configured. Use <code>tools.guardrails</code> in
+              the agent config to attach one.
+            </p>
+          ) : (
+            <ul className="space-y-1">
+              {agentLevel.map((g, i) => (
+                <GuardrailRow key={`agent-${i}`} g={g} attachedTo="all tools" />
+              ))}
+              {mcpAttached.map((g, i) => (
+                <GuardrailRow key={`mcp-${i}`} g={g} attachedTo={g.attached_to} />
+              ))}
+            </ul>
+          )}
+        </>
+      )}
+    </Section>
+  );
+}
+
+function GuardrailRow({ g, attachedTo }: { g: GuardrailRef; attachedTo: string }) {
+  const kind = g.pattern ? "regex" : g.prompt ? "llm-judge" : "named";
+  return (
+    <li className="rounded-md border border-claude-border bg-claude-bg px-2.5 py-1.5 text-[11px] flex items-center gap-2">
+      <span className="font-mono text-claude-text-primary">{g.name || "(inline)"}</span>
+      <span className="rounded px-1.5 py-px text-[10px] bg-claude-input text-claude-text-secondary">
+        {kind}
+      </span>
+      <span className="rounded px-1.5 py-px text-[10px] bg-claude-input text-claude-text-secondary">
+        on_fail={g.on_fail ?? "retry"}
+      </span>
+      <span className="ml-auto text-claude-text-muted">→ {attachedTo}</span>
+    </li>
   );
 }

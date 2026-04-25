@@ -9,12 +9,14 @@ from loguru import logger
 
 from specialagent.agent.consolidator import MemoryConsolidator
 from specialagent.agent.context import ContextBuilder
+from specialagent.agent.loop.guardrails import GuardrailRunner
 from specialagent.agent.loop.mcp import McpManager
 from specialagent.agent.loop.tools import ToolsManager
 from specialagent.agent.tools.utils import strip_think, tool_hint
 from specialagent.core.session import Session, SessionManager
 from specialagent.providers.base import LLMProvider
 from specops_lib.bus import InboundMessage, MessageBus, OutboundMessage
+from specops_lib.guardrails import Guardrail
 
 
 def _on_consolidate_done(task: asyncio.Task) -> None:
@@ -42,6 +44,8 @@ class SessionProcessor:
         memory_window: int,
         on_event: Callable[..., Awaitable[None]] | None = None,
         software_management=None,
+        guardrail_runner: GuardrailRunner | None = None,
+        agent_output_guardrails: list[Guardrail] | None = None,
     ) -> None:
         self._tools_manager = tools_manager
         self._mcp_manager = mcp_manager
@@ -57,6 +61,8 @@ class SessionProcessor:
         self._memory_window = memory_window
         self._on_event = on_event
         self._software_management = software_management
+        self._guardrail_runner = guardrail_runner
+        self._agent_output_guardrails: list[Guardrail] = list(agent_output_guardrails or [])
 
     async def run_agent_loop(
         self,
@@ -194,11 +200,64 @@ class SessionProcessor:
                         step_id=step_id,
                         event_kind="step_completed",
                     )
+                # Phase 3: agent_output guardrails on the final assistant message.
+                final_content = await self._enforce_agent_output(
+                    final_content,
+                    execution_id=execution_id,
+                    step_id=step_id,
+                    plan_id=plan_id,
+                )
                 break
 
         # Collect all messages added during this turn (excludes system prompt + prior history).
         turn_messages = messages[turn_start_idx:]
         return final_content, tools_used, turn_messages
+
+    async def _enforce_agent_output(
+        self,
+        content: str | None,
+        *,
+        execution_id: str,
+        step_id: str,
+        plan_id: str,
+    ) -> str | None:
+        """Apply ``agent_output`` guardrails to the final assistant
+        message. ``replace`` and ``retry`` substitute the message body
+        in place; ``raise`` and ``escalate`` surface as a synthetic
+        marker so the user sees the guardrail's reason instead of the
+        original output.
+        """
+        if content is None or not self._guardrail_runner or not self._agent_output_guardrails:
+            return content
+        outcome = await self._guardrail_runner.enforce(
+            content=content,
+            guardrails=self._agent_output_guardrails,
+            position="agent_output",
+            execution_id=execution_id or None,
+            step_id=step_id or None,
+            plan_id=plan_id,
+        )
+        if outcome.passed:
+            return content
+        if outcome.decision == "replace":
+            return outcome.content
+        if outcome.decision == "retry":
+            return (
+                f"[GUARDRAIL retry on agent_output: {outcome.guardrail_name}] "
+                f"{outcome.retry_message}\n\nOriginal draft:\n{content}"
+            )
+        if outcome.decision == "raise":
+            return (
+                f"[GUARDRAIL raise on agent_output: {outcome.guardrail_name}] "
+                f"{outcome.error_message}"
+            )
+        if outcome.decision == "pause":
+            return (
+                f"[GUARDRAIL escalate on agent_output: {outcome.guardrail_name}] "
+                f"{outcome.pause_payload.get('reason', '')} "
+                "Reply pending human approval."
+            )
+        return content
 
     async def process_message(
         self,

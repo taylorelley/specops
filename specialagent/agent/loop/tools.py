@@ -9,6 +9,7 @@ from loguru import logger
 
 from specialagent.agent.agent_fs import AgentFS
 from specialagent.agent.approval import ToolApprovalManager
+from specialagent.agent.loop.guardrails import EnforcementOutcome, GuardrailRunner
 from specialagent.agent.subagent import SubagentManager
 from specialagent.agent.tools.a2a import get_a2a_tools
 from specialagent.agent.tools.cron import CronTool
@@ -39,6 +40,7 @@ from specops_lib.execution import (
     NullJournal,
     derive_idempotency_key,
 )
+from specops_lib.guardrails import Guardrail
 
 
 class ToolsManager:
@@ -67,6 +69,9 @@ class ToolsManager:
         var_lookup: Mapping[str, str] | None = None,
         openapi_tools_config: dict[str, OpenAPIToolConfig] | None = None,
         api_tool_cache_dir: Path | None = None,
+        guardrail_runner: GuardrailRunner | None = None,
+        tool_guardrails: Mapping[str, list[Guardrail]] | None = None,
+        default_tool_guardrails: list[Guardrail] | None = None,
     ) -> None:
         self.tools = tools
         self.mcp = mcp
@@ -89,6 +94,11 @@ class ToolsManager:
         self._var_lookup: dict[str, str] = dict(var_lookup or {})
         self._openapi_tools_config: dict[str, OpenAPIToolConfig] = dict(openapi_tools_config or {})
         self._api_tool_cache_dir = api_tool_cache_dir
+        self._guardrail_runner = guardrail_runner
+        self._tool_guardrails: dict[str, list[Guardrail]] = {
+            k: list(v) for k, v in (tool_guardrails or {}).items()
+        }
+        self._default_tool_guardrails: list[Guardrail] = list(default_tool_guardrails or [])
 
     def register_default_tools(self) -> None:
         """Register the default set of tools."""
@@ -195,6 +205,50 @@ class ToolsManager:
         """If this message is a yes/no reply for a pending tool approval, resolve the future and return True."""
         return self._approval.try_resolve(msg)
 
+    def guardrails_for_tool(self, tool_name: str) -> list[Guardrail]:
+        """Resolved guardrail instances for one tool.
+
+        Lookup order (each contributes; results are concatenated):
+          1. Exact match in ``_tool_guardrails`` (legacy approval per-tool entries).
+          2. Any registered prefix that ``tool_name`` startswith — used
+             for ``mcp_<server>_*`` and ``api_<spec>_*`` generated tools
+             where the ToolsManager only knows the spec/server prefix at
+             config time.
+          3. Agent-default tool guardrails.
+        """
+        if not self._guardrail_runner:
+            return []
+        out: list[Guardrail] = list(self._tool_guardrails.get(tool_name) or [])
+        for key, refs in self._tool_guardrails.items():
+            if key.endswith("_") and tool_name.startswith(key):
+                out.extend(refs)
+        out.extend(self._default_tool_guardrails)
+        return out
+
+    async def _enforce_guardrails(
+        self,
+        *,
+        position: str,
+        content: str,
+        tool_call: ToolCallRequest,
+        execution_id: str,
+        step_id: str,
+        plan_id: str,
+    ) -> EnforcementOutcome:
+        guardrails = self.guardrails_for_tool(tool_call.name)
+        if not guardrails or not self._guardrail_runner:
+            return EnforcementOutcome(decision="pass", content=content)
+        return await self._guardrail_runner.enforce(
+            content=content,
+            guardrails=guardrails,
+            position=position,  # type: ignore[arg-type]
+            tool_name=tool_call.name,
+            args=tool_call.arguments,
+            execution_id=execution_id or None,
+            step_id=step_id or None,
+            plan_id=plan_id,
+        )
+
     async def execute_tool(
         self,
         tool_call: ToolCallRequest,
@@ -204,18 +258,33 @@ class ToolsManager:
         execution_id: str = "",
         step_id: str = "",
     ) -> tuple[str, str]:
-        """Execute a single tool call with logging, journal, and truncation.
+        """Execute a single tool call with guardrails, logging, journal, and truncation.
 
-        Approval gate: if approval is ``ask_before_run``, prompts the user
-        in-channel and waits for approval.
+        Order of operations:
+          1. Approval gate (legacy ``ToolApprovalConfig``).
+          2. ``tool_input`` guardrails.
+          3. Journal lookup for prior tool_result (resume short-circuit).
+          4. Emit ``tool_call`` event, dispatch the tool, emit ``tool_result``.
+          5. ``tool_output`` guardrails.
 
-        Journal: when ``execution_id`` is provided and the tool is
-        ``checkpoint`` or ``skip`` replay-safety, the prior journal is
-        consulted before executing. A previously completed call short-
-        circuits to the cached result; an interrupted call (tool_call
-        with no tool_result) returns a synthetic message rather than
-        re-executing a side-effecting tool.
+        Backwards-compatible: when no ``GuardrailRunner`` is configured,
+        steps 2 and 5 are no-ops and the dispatch path is identical to
+        Phase 1.
         """
+        # Phase 3: tool_input guardrails (before any journal/dispatch work).
+        if self._guardrail_runner:
+            outcome = await self._enforce_guardrails(
+                position="tool_input",
+                content=json.dumps(tool_call.arguments, ensure_ascii=False),
+                tool_call=tool_call,
+                execution_id=execution_id,
+                step_id=step_id,
+                plan_id=plan_id,
+            )
+            short_circuit = _outcome_short_circuit(outcome, tool_call.name, "tool_input")
+            if short_circuit is not None:
+                return tool_call.id, short_circuit
+
         mode = self._approval.get_mode(tool_call.name)
         if mode == "ask_before_run":
             logger.info(
@@ -325,4 +394,48 @@ class ToolsManager:
                 idempotency_key=idem_key,
                 payload_json=result if execution_id else None,
             )
+
+        # Phase 3: tool_output guardrails on the dispatched result.
+        if self._guardrail_runner and result_status == "ok":
+            outcome = await self._enforce_guardrails(
+                position="tool_output",
+                content=str(result),
+                tool_call=tool_call,
+                execution_id=execution_id,
+                step_id=step_id,
+                plan_id=plan_id,
+            )
+            if outcome.decision == "replace":
+                result = outcome.content
+            else:
+                short_circuit = _outcome_short_circuit(outcome, tool_call.name, "tool_output")
+                if short_circuit is not None:
+                    result = short_circuit
+
         return tool_call.id, result
+
+
+def _outcome_short_circuit(
+    outcome: EnforcementOutcome, tool_name: str, position: str
+) -> str | None:
+    """Translate a non-pass guardrail outcome into the synthetic
+    tool-result string the LLM sees. Returns ``None`` when the outcome
+    passed and execution should continue normally; ``replace`` is
+    handled separately by the caller because it modifies content."""
+    if outcome.passed or outcome.decision == "replace":
+        return None
+    if outcome.decision == "retry":
+        return (
+            f"[GUARDRAIL retry on {position}: {outcome.guardrail_name}] "
+            f"{outcome.retry_message} "
+            f"Adjust arguments / output and try '{tool_name}' again."
+        )
+    if outcome.decision == "raise":
+        return f"[GUARDRAIL raise on {position}: {outcome.guardrail_name}] {outcome.error_message}"
+    if outcome.decision == "pause":
+        return (
+            f"[GUARDRAIL escalate on {position}: {outcome.guardrail_name}] "
+            f"{outcome.pause_payload.get('reason', '')} "
+            "Execution paused for human approval; do not proceed without it."
+        )
+    return None

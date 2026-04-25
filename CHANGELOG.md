@@ -84,6 +84,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   configs are unchanged on disk; redaction happens at API response
   time.
 
+### Added (continued)
+- **Guardrail framework (Phase 3 of Agentspan idea adoption).** New
+  `specops_lib/guardrails/` module with `Guardrail` base type,
+  `GuardrailResult` / `OnFail` / `Position` literals, `@guardrail`
+  decorator, plus three concrete kinds — `CallableGuardrail`,
+  `RegexGuardrail`, and `LLMGuardrail` (judge callable injected by
+  the runner). Four `on_fail` modes — `retry`, `raise`, `fix`,
+  `escalate` — drive the agent loop's response when a check fails;
+  `escalate` emits a `hitl_waiting` event into the durable
+  execution journal so Phase 4's HITL resume can pick it up. Each
+  guardrail decision emits a `guardrail_result` event for audit.
+  New `GuardrailRef` config model with `name` / `on_fail` /
+  `max_retries` / inline `pattern` or `prompt`; plumbed under
+  `agents.defaults.guardrails` (agent_output position),
+  `tools.guardrails` (default for every tool), and per-tool overrides
+  on `OpenAPIToolConfig.guardrails` and `MCPServerConfig.guardrails`.
+  The existing `ToolApprovalConfig` YAML continues to work — at
+  agent start a synthesiser maps each `ask_before_run` tool entry to
+  an inline `legacy_approval` escalate guardrail. The Tools tab in
+  the agent settings UI gains a read-only "Configured guardrails"
+  list; full editing UX is a follow-up. API shape derived from
+  Agentspan (MIT, © 2025 Agentspan); see NOTICE for attribution.
+
 ### Notes
 - The new `executions` and `execution_events` tables are additive.
   `_migrate()` (`specops/core/database.py`) creates them with

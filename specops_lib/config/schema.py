@@ -18,6 +18,26 @@ class Base(BaseModel):
     secret_fields: ClassVar[frozenset[str]] = frozenset()
 
 
+class GuardrailRef(Base):
+    """One guardrail attachment.
+
+    Resolution at agent start (in ``GuardrailRunner.resolve_refs``):
+      * If ``name`` matches a registered guardrail, that wins.
+      * Else, ``pattern`` defines an inline ``RegexGuardrail``.
+      * Else, ``prompt`` defines an inline ``LLMGuardrail``.
+
+    ``on_fail`` controls what happens when the guardrail fails;
+    ``max_retries`` bounds the ``retry`` mode per (step, guardrail).
+    """
+
+    name: str = ""
+    on_fail: str = "retry"
+    max_retries: int = Field(default=3, alias="maxRetries")
+    pattern: str | None = None
+    prompt: str | None = None
+    regex_mode: str = Field(default="block", alias="regexMode")
+
+
 class WhatsAppConfig(Base):
     secret_fields: ClassVar[frozenset[str]] = frozenset()
     enabled: bool = False
@@ -170,6 +190,8 @@ class AgentDefaults(Base):
     fault_tolerance: FaultToleranceConfig = Field(
         default_factory=FaultToleranceConfig, alias="faultTolerance"
     )
+    # Guardrails applied to the final assistant message (Position.AGENT_OUTPUT).
+    guardrails: list[GuardrailRef] = Field(default_factory=list)
 
 
 class AgentsConfig(Base):
@@ -271,6 +293,8 @@ class MCPServerConfig(Base):
     # Config schema for the server (populated at install time from the registry).
     # Standard JSON Schema fields drive the UI: type, format, enum, x-widget, etc.
     config_schema: list[MCPConfigField] = Field(default_factory=list, alias="configSchema")
+    # Guardrails applied to every tool exposed by this server.
+    guardrails: list[GuardrailRef] = Field(default_factory=list)
 
 
 class OpenAPIToolConfig(Base):
@@ -292,6 +316,8 @@ class OpenAPIToolConfig(Base):
     max_tools: int = Field(default=64, alias="maxTools")
     base_url_override: str | None = Field(default=None, alias="baseUrlOverride")
     role_hint: str = Field(default="", alias="roleHint")
+    # Guardrails applied to every operation generated from this spec.
+    guardrails: list[GuardrailRef] = Field(default_factory=list)
 
 
 class SoftwareEntry(Base):
@@ -324,6 +350,10 @@ class ToolsConfig(Base):
     software: dict[str, SoftwareEntry] = Field(default_factory=dict)
     approval: ToolApprovalConfig = Field(default_factory=ToolApprovalConfig)
     openapi_tools: dict[str, OpenAPIToolConfig] = Field(default_factory=dict, alias="openapiTools")
+    # Default guardrails applied to every tool's input/output. Per-tool
+    # overrides come via Tool.guardrails (class-level) plus
+    # OpenAPIToolConfig.guardrails / MCPServerConfig.guardrails.
+    guardrails: list[GuardrailRef] = Field(default_factory=list)
 
 
 class HeartbeatConfig(Base):
