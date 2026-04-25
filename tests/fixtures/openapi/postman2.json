@@ -1,0 +1,32 @@
+{
+  "info": {
+    "name": "Sample Postman Collection",
+    "schema": "https://schema.postman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Get user",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "https://api.example.com/users/{{userId}}",
+          "protocol": "https",
+          "host": ["api", "example", "com"],
+          "path": ["users", "{{userId}}"]
+        }
+      }
+    },
+    {
+      "name": "List orders",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "https://api.example.com/orders",
+          "protocol": "https",
+          "host": ["api", "example", "com"],
+          "path": ["orders"]
+        }
+      }
+    }
+  ]
+}

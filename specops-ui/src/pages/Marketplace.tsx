@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { PageContainer, PageHeader, PlanIcon, TrashIcon } from "../components/ui";
-import { useTemplates, useSearchSkills, useSearchMcpServers, useSoftwareCatalog, useCustomSoftware, useAddCustomSoftware, useUpdateCustomSoftware, useDeleteCustomSoftware, usePlanTemplates, useCustomPlanTemplates, useDeleteCustomPlanTemplate, useCustomSkills, useDeleteCustomSkill, useCustomMcpServers, useDeleteCustomMcpServer } from "../lib/queries";
+import { useTemplates, useSearchSkills, useSearchMcpServers, useSoftwareCatalog, useCustomSoftware, useAddCustomSoftware, useUpdateCustomSoftware, useDeleteCustomSoftware, usePlanTemplates, useCustomPlanTemplates, useDeleteCustomPlanTemplate, useCustomSkills, useDeleteCustomSkill, useCustomMcpServers, useDeleteCustomMcpServer, useApiToolsCatalog, useDeleteCustomApiTool } from "../lib/queries";
 import CreateSpecialAgentModal from "../components/CreateSpecialAgentModal";
 import CreatePlanModal from "../components/CreatePlanModal";
 import TemplateDetailModal from "../components/TemplateDetailModal";
@@ -9,10 +9,12 @@ import PlanTemplateDetailModal from "../components/PlanTemplateDetailModal";
 import AddPlanTemplateModal from "../components/AddPlanTemplateModal";
 import AddCustomSkillModal from "../components/AddCustomSkillModal";
 import AddCustomMcpModal from "../components/AddCustomMcpModal";
+import AddCustomApiToolModal from "../components/AddCustomApiToolModal";
 import InstallSkillModal from "../components/InstallSkillModal";
 import InstallMcpModal from "../components/InstallMcpModal";
 import InstallSoftwareModal from "../components/InstallSoftwareModal";
-import type { MarketplaceSkill, MCPRegistryServer, SoftwareCatalogEntry, AddCustomSoftwarePayload, PlanTemplate, CustomSkillEntry, CustomMcpEntry } from "../lib/types";
+import InstallApiToolModal from "../components/InstallApiToolModal";
+import type { MarketplaceSkill, MCPRegistryServer, SoftwareCatalogEntry, AddCustomSoftwarePayload, PlanTemplate, CustomSkillEntry, CustomMcpEntry, ApiToolEntry } from "../lib/types";
 import {
   HiOutlineCommandLine,
   HiOutlineCodeBracket,
@@ -27,7 +29,7 @@ import {
   HiOutlineTrophy,
 } from "react-icons/hi2";
 
-type Tab = "templates" | "plan-templates" | "skills" | "mcp" | "software";
+type Tab = "templates" | "plan-templates" | "skills" | "mcp" | "software" | "api-tools";
 
 const css = {
   input: "w-full rounded-lg border border-claude-border bg-claude-input px-3 py-2 text-sm placeholder:text-claude-text-muted focus:border-claude-accent focus:outline-none focus:ring-1 focus:ring-claude-accent/30 transition-colors",
@@ -40,6 +42,7 @@ const TAB_FROM_HASH: Record<string, Tab> = {
   skills: "skills",
   mcp: "mcp",
   software: "software",
+  "api-tools": "api-tools",
 };
 
 export default function Marketplace() {
@@ -88,6 +91,9 @@ export default function Marketplace() {
         <button className={tabClass("mcp")} onClick={() => setTab("mcp")}>
           MCP Servers
         </button>
+        <button className={tabClass("api-tools")} onClick={() => setTab("api-tools")}>
+          API Tools
+        </button>
         <button className={tabClass("software")} onClick={() => setTab("software")}>
           Software
         </button>
@@ -103,8 +109,151 @@ export default function Marketplace() {
 
       {tab === "mcp" && <McpTab />}
 
+      {tab === "api-tools" && <ApiToolsTab />}
+
       {tab === "software" && <SoftwareTab />}
     </PageContainer>
+  );
+}
+
+function ApiToolsTab() {
+  const { data: catalog = [], isLoading } = useApiToolsCatalog();
+  const deleteCustom = useDeleteCustomApiTool();
+  const [installEntry, setInstallEntry] = useState<ApiToolEntry | null>(null);
+  const [showAddCustom, setShowAddCustom] = useState(false);
+
+  const handleDelete = (entry: ApiToolEntry) => {
+    if (window.confirm(`Remove "${entry.name}" from the API-tool catalog?`)) {
+      deleteCustom.mutate(entry.id);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-4">
+        <p className="text-sm text-claude-text-secondary">
+          API Tools turn an OpenAPI / Swagger / Postman spec into agent-callable
+          tools. Headers carry <code>${"${VAR}"}</code> placeholders resolved at
+          runtime from the agent vault.
+        </p>
+        <button
+          onClick={() => setShowAddCustom(true)}
+          className={`${css.btn} flex items-center gap-1.5 border border-claude-border bg-claude-input hover:bg-claude-surface text-claude-text-primary text-xs shrink-0`}
+        >
+          <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+          </svg>
+          Add Custom
+        </button>
+      </div>
+
+      {isLoading && (
+        <div className="flex items-center justify-center py-12 text-sm text-claude-text-muted">
+          Loading API-tool catalog…
+        </div>
+      )}
+
+      {!isLoading && catalog.length === 0 && (
+        <div className="flex flex-col items-center justify-center py-12 text-claude-text-muted">
+          <p className="text-sm">No API tools available. Add a custom entry above.</p>
+        </div>
+      )}
+
+      {!isLoading && catalog.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          {catalog.map((entry: ApiToolEntry) => (
+            <ApiToolCard
+              key={entry.id}
+              entry={entry}
+              onInstall={() => setInstallEntry(entry)}
+              onDelete={
+                entry.source === "self-hosted" ? () => handleDelete(entry) : undefined
+              }
+            />
+          ))}
+        </div>
+      )}
+
+      <InstallApiToolModal
+        open={!!installEntry}
+        onClose={() => setInstallEntry(null)}
+        entry={installEntry}
+      />
+
+      <AddCustomApiToolModal
+        open={showAddCustom}
+        onClose={() => setShowAddCustom(false)}
+      />
+    </div>
+  );
+}
+
+function ApiToolCard({
+  entry,
+  onInstall,
+  onDelete,
+}: {
+  entry: ApiToolEntry;
+  onInstall: () => void;
+  onDelete?: () => void;
+}) {
+  return (
+    <div className="rounded-lg border border-claude-border bg-claude-surface p-4 flex flex-col gap-2">
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-semibold text-claude-text-primary">
+              {entry.name}
+            </h3>
+            {entry.source === "self-hosted" && (
+              <span className="text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 bg-claude-accent/10 text-claude-accent">
+                custom
+              </span>
+            )}
+          </div>
+          {entry.author && (
+            <p className="text-xs text-claude-text-muted">{entry.author}</p>
+          )}
+        </div>
+        {onDelete && (
+          <button
+            onClick={onDelete}
+            className="text-claude-text-muted hover:text-red-500 transition-colors"
+            aria-label="Remove"
+          >
+            <TrashIcon className="h-4 w-4" />
+          </button>
+        )}
+      </div>
+      {entry.description && (
+        <p className="text-xs text-claude-text-secondary line-clamp-3">
+          {entry.description}
+        </p>
+      )}
+      <div className="flex flex-wrap gap-1">
+        {(entry.categories ?? []).map((c) => (
+          <span
+            key={c}
+            className="text-[10px] rounded px-1.5 py-0.5 bg-claude-input text-claude-text-secondary"
+          >
+            {c}
+          </span>
+        ))}
+      </div>
+      {entry.required_env && entry.required_env.length > 0 && (
+        <p className="text-[11px] text-claude-text-muted">
+          Required: {entry.required_env.join(", ")}
+        </p>
+      )}
+      <div className="mt-auto pt-2 flex justify-end">
+        <button
+          onClick={onInstall}
+          className={`${css.btn} bg-claude-accent text-white hover:opacity-90 text-xs`}
+        >
+          Install on agent…
+        </button>
+      </div>
+    </div>
   );
 }
 

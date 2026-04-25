@@ -26,6 +26,7 @@ from specops_lib.config.schema import (
     AgentDefaults,
     ControlPlaneConfig,
     ProviderConfig,
+    SecretsConfig,
     SkillsConfig,
     ToolApprovalConfig,
     ToolsConfig,
@@ -64,6 +65,7 @@ class AgentLoop:
         software_management: SoftwareManagement | None = None,
         on_event: Callable[..., Awaitable[None]] | None = None,
         journal_lookup: JournalLookup | None = None,
+        secrets_config: SecretsConfig | None = None,
     ):
         self._file_service = file_service
         self.workspace = file_service.workspace_path
@@ -132,6 +134,10 @@ class AgentLoop:
             self._file_service.logs_path
         )
 
+        secrets = secrets_config or SecretsConfig()
+        var_lookup = dict(secrets.env or {})
+        api_tool_cache_dir = self._file_service.config_path.parent / "api-tools"
+
         self._tools_manager = ToolsManager(
             tools=self.tools,
             mcp=self.mcp,
@@ -151,6 +157,9 @@ class AgentLoop:
             cron_service=cron_service,
             on_event=on_event,
             journal_lookup=self._journal_lookup,
+            var_lookup=var_lookup,
+            openapi_tools_config=dict(tools.openapi_tools or {}),
+            api_tool_cache_dir=api_tool_cache_dir,
         )
         self._tools_manager.register_default_tools()
 
@@ -283,6 +292,10 @@ class AgentLoop:
         self._running = True
         self._mcp_manager.connect()
         await self._mcp_manager.await_connected()
+        try:
+            await self._tools_manager.register_openapi_tools()
+        except Exception as exc:
+            logger.warning("OpenAPI tool registration failed (non-fatal): {}", exc)
         logger.info("Agent loop started")
 
         while self._running:

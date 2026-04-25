@@ -579,4 +579,44 @@ export const api = {
         method: "DELETE",
       }),
   },
+  apiTools: {
+    search: (q: string = "", limit: number = 50) =>
+      request<import("./types").ApiToolEntry[]>(
+        `/api-tools/registry?q=${encodeURIComponent(q)}&limit=${limit}`,
+      ),
+    listCustom: () =>
+      request<import("./types").ApiToolEntry[]>("/api-tools/custom"),
+    addCustom: (entry: import("./types").AddCustomApiToolPayload) =>
+      post<import("./types").ApiToolEntry>("/api-tools/custom", entry),
+    updateCustom: (
+      entryId: string,
+      entry: import("./types").AddCustomApiToolPayload,
+    ) =>
+      put<import("./types").ApiToolEntry>(
+        `/api-tools/custom/${encodeURIComponent(entryId)}`,
+        entry,
+      ),
+    deleteCustom: (entryId: string) =>
+      request<{ ok: boolean; id: string }>(
+        `/api-tools/custom/${encodeURIComponent(entryId)}`,
+        { method: "DELETE" },
+      ),
+    listForAgent: (agentId: string) =>
+      request<{ openapi_tools: import("./types").AgentApiToolEntry[] }>(
+        `/agents/${agentId}/api-tools`,
+      ),
+    install: (
+      agentId: string,
+      body: import("./types").InstallApiToolPayload,
+    ) =>
+      post<{ ok: boolean; spec_id: string; spec_url: string }>(
+        `/agents/${agentId}/api-tools/install`,
+        body,
+      ),
+    uninstall: (agentId: string, specId: string) =>
+      request<{ ok: boolean; spec_id: string }>(
+        `/agents/${agentId}/api-tools/${encodeURIComponent(specId)}`,
+        { method: "DELETE" },
+      ),
+  },
 };

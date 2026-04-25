@@ -100,6 +100,7 @@ def create_worker_context(
         session_manager=session_manager,
         software_management=software_management,
         on_event=on_event,
+        secrets_config=config.secrets,
     )
 
     # Wire the agent_loop into the engine for hot-reload support

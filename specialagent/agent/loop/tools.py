@@ -3,6 +3,7 @@
 import json
 import time
 from pathlib import Path
+from typing import Mapping
 
 from loguru import logger
 
@@ -19,6 +20,10 @@ from specialagent.agent.tools.filesystem import (
     WriteFileTool,
 )
 from specialagent.agent.tools.message import MessageTool
+from specialagent.agent.tools.openapi import (
+    fetch_spec,
+    generate_tools_from_config,
+)
 from specialagent.agent.tools.plan import get_plan_tools
 from specialagent.agent.tools.policy import ShellCommandPolicy
 from specialagent.agent.tools.registry import ToolRegistry
@@ -28,7 +33,7 @@ from specialagent.agent.tools.utils import redact_tool_args, truncate_output
 from specialagent.agent.tools.web import WebFetchTool, WebSearchTool
 from specialagent.providers.base import ToolCallRequest
 from specops_lib.bus import InboundMessage, MessageBus
-from specops_lib.config.schema import ExecToolConfig, WebSearchConfig
+from specops_lib.config.schema import ExecToolConfig, OpenAPIToolConfig, WebSearchConfig
 from specops_lib.execution import (
     JournalLookup,
     NullJournal,
@@ -59,6 +64,9 @@ class ToolsManager:
         cron_service=None,
         on_event=None,
         journal_lookup: JournalLookup | None = None,
+        var_lookup: Mapping[str, str] | None = None,
+        openapi_tools_config: dict[str, OpenAPIToolConfig] | None = None,
+        api_tool_cache_dir: Path | None = None,
     ) -> None:
         self.tools = tools
         self.mcp = mcp
@@ -78,6 +86,9 @@ class ToolsManager:
         self._cron_service = cron_service
         self._on_event = on_event
         self._journal: JournalLookup = journal_lookup or NullJournal()
+        self._var_lookup: dict[str, str] = dict(var_lookup or {})
+        self._openapi_tools_config: dict[str, OpenAPIToolConfig] = dict(openapi_tools_config or {})
+        self._api_tool_cache_dir = api_tool_cache_dir
 
     def register_default_tools(self) -> None:
         """Register the default set of tools."""
@@ -119,6 +130,49 @@ class ToolsManager:
             logger.info("Registered A2A tools")
 
         self.tools.register_plugins()
+
+    async def register_openapi_tools(self) -> dict[str, int]:
+        """Fetch each configured OpenAPI/Swagger/Postman spec and instantiate
+        one :class:`GeneratedHttpTool` per filtered operation.
+
+        Returns a ``{spec_id: tool_count}`` map for diagnostic logging.
+        Failures (network, parse) are logged and skip that spec but do
+        not prevent other configs or other tools from registering.
+        """
+        result: dict[str, int] = {}
+        for spec_id, cfg in self._openapi_tools_config.items():
+            cfg_with_id = cfg if cfg.spec_id else cfg.model_copy(update={"spec_id": spec_id})
+            cache_path: Path | None = None
+            if self._api_tool_cache_dir:
+                cache_path = self._api_tool_cache_dir / f"{spec_id}.json"
+            try:
+                spec_text = await fetch_spec(cfg_with_id.spec_url, cache_path=cache_path)
+            except Exception as exc:
+                logger.warning(
+                    "[openapi] Spec fetch failed: spec_id={}, url={}, err={}",
+                    spec_id,
+                    cfg_with_id.spec_url,
+                    exc,
+                )
+                result[spec_id] = 0
+                continue
+            try:
+                generated = generate_tools_from_config(
+                    cfg_with_id,
+                    spec_text=spec_text,
+                    var_lookup=self._var_lookup,
+                    ssrf_protection=self._ssrf_protection,
+                    max_chars=self._max_tool_output_chars,
+                )
+            except Exception as exc:
+                logger.warning("[openapi] Spec generate failed: spec_id={}, err={}", spec_id, exc)
+                result[spec_id] = 0
+                continue
+            for tool in generated:
+                self.tools.register(tool)
+            result[spec_id] = len(generated)
+            logger.info("[openapi] Registered {} tool(s) for spec_id={}", len(generated), spec_id)
+        return result
 
     def set_tool_context(self, channel: str, chat_id: str) -> None:
         """Update context for tools that need routing info (message, spawn, cron).

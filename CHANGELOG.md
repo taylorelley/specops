@@ -55,6 +55,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tool_result) surfaces as `[INTERRUPTED]` to the LLM rather than
   re-executing the side effect; `skip`-safety surfaces
   `[RESUME UNSAFE]` and aborts the step.
+- **API Tools marketplace category (Phase 2 of Agentspan idea
+  adoption).** A new `marketplace/api-tools/catalog.yaml` ships with
+  bundled entries (Stripe, GitHub, OpenAI). On install, the agent
+  worker fetches the spec at startup (cached under
+  `.config/api-tools/`), filters to up to `max_tools` operations
+  using a token-set overlap with the agent's role hint, and
+  registers one `GeneratedHttpTool` per operation. Header templates
+  carry `${VAR}` placeholders resolved from the encrypted variable
+  vault at request time — credentials never live on disk in
+  plaintext. Specs may opt operations into `replay_safety="safe"`
+  via the `x-replay-safety` extension. New REST endpoints under
+  `/api/api-tools/*` and `/api/agents/{id}/api-tools/*`. New
+  Marketplace tab **API Tools** (sits between MCP Servers and
+  Software). New `OpenAPIToolConfig` schema (declares
+  `secret_fields = {"headers"}`) plumbed under
+  `tools.openapi_tools`. Hand-rolled parser covers OpenAPI 3 /
+  Swagger 2 / Postman v2.1 — the optional `prance` extra is detected
+  lazily and used when present.
+
+### Fixed
+- **`MCPServerConfig` now redacts `headers` and `env` in API
+  responses.** Previously these credential-bearing fields were
+  exposed in plaintext through the config-fetch endpoint because
+  the model didn't declare them as secrets. Both are now in
+  `MCPServerConfig.secret_fields` and the path-aware redactor walks
+  through `dict[str, MCPServerConfig]` correctly. Existing stored
+  configs are unchanged on disk; redaction happens at API response
+  time.
 
 ### Notes
 - The new `executions` and `execution_events` tables are additive.

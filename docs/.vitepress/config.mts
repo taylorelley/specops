@@ -25,6 +25,7 @@ export default defineConfig({
             { text: "Reverse Proxy", link: "/guide/reverse-proxy" },
             { text: "Channels", link: "/guide/channels" },
             { text: "Plans", link: "/guide/plans" },
+            { text: "API Tools", link: "/guide/api-tools" },
             { text: "Security", link: "/guide/security" },
           ],
         },

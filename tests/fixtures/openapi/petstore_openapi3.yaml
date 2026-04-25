@@ -1,0 +1,50 @@
+openapi: 3.0.3
+info:
+  title: Petstore
+  version: "1.0"
+servers:
+  - url: https://api.example.com/v1
+paths:
+  /pets:
+    get:
+      operationId: listPets
+      summary: List all pets
+      tags: [pets, read]
+      x-replay-safety: safe
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer }
+    post:
+      operationId: createPet
+      summary: Create a pet
+      tags: [pets, write]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+              required: [name]
+  /pets/{petId}:
+    get:
+      operationId: showPetById
+      summary: Info for a specific pet
+      tags: [pets, read]
+      x-replay-safety: safe
+      parameters:
+        - name: petId
+          in: path
+          required: true
+          schema: { type: string }
+    delete:
+      operationId: deletePet
+      summary: Delete a pet
+      tags: [pets, write]
+      parameters:
+        - name: petId
+          in: path
+          required: true
+          schema: { type: string }

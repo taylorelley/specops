@@ -380,3 +380,49 @@ export type TaskComment = {
   content: string;
   created_at: string;
 };
+
+export type ApiToolEntry = {
+  id: string;
+  name: string;
+  description?: string;
+  author?: string;
+  version?: string;
+  categories?: string[];
+  spec_url: string;
+  headers?: Record<string, string>;
+  default_max_tools?: number;
+  required_env?: string[];
+  homepage?: string;
+  source?: "bundled" | "self-hosted";
+};
+
+export type AddCustomApiToolPayload = {
+  id: string;
+  name: string;
+  description?: string;
+  author?: string;
+  version?: string;
+  categories?: string[];
+  homepage?: string;
+  spec_url: string;
+  headers?: Record<string, string>;
+  default_max_tools?: number;
+  required_env?: string[];
+};
+
+export type InstallApiToolPayload = {
+  spec_id: string;
+  headers?: Record<string, string>;
+  enabled_operations?: string[] | null;
+  max_tools?: number;
+  base_url_override?: string | null;
+  role_hint?: string;
+};
+
+export type AgentApiToolEntry = {
+  spec_id: string;
+  spec_url: string;
+  max_tools: number;
+  enabled_operations?: string[] | null;
+  role_hint?: string;
+};

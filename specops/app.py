@@ -14,6 +14,7 @@ from slowapi.errors import RateLimitExceeded
 
 from specops import __version__
 from specops.apis.agents import router as agents_router
+from specops.apis.api_tools import router as api_tools_router
 from specops.apis.auth import router as auth_router
 from specops.apis.config import router as config_router
 from specops.apis.control import router as control_router
@@ -101,6 +102,7 @@ def create_app() -> FastAPI:
     app.include_router(config_router)
     app.include_router(control_router)
     app.include_router(executions_router)
+    app.include_router(api_tools_router)
     app.include_router(llm_providers_router)
     app.include_router(logs_router)
     app.include_router(terminal_router)
