@@ -25,6 +25,7 @@ export default defineConfig({
             { text: "Reverse Proxy", link: "/guide/reverse-proxy" },
             { text: "Channels", link: "/guide/channels" },
             { text: "Plans", link: "/guide/plans" },
+            { text: "Durable Runtime", link: "/guide/durable-runtime" },
             { text: "API Tools", link: "/guide/api-tools" },
             { text: "Guardrails", link: "/guide/guardrails" },
             { text: "Human-in-the-Loop", link: "/guide/hitl" },
