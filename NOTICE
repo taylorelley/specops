@@ -31,3 +31,33 @@ include, but are not limited to:
 
 A more complete, commit-level history of modifications is available in
 CHANGELOG.md and in the project's git log.
+
+------------------------------------------------------------------------------
+Agentspan API design references
+------------------------------------------------------------------------------
+
+The durability, guardrail, and OpenAPI api_tool features in SpecOps draw
+on the public API design of the Agentspan project:
+
+    Agentspan
+    Copyright (c) 2025 Agentspan
+    https://github.com/agentspan-ai/agentspan
+
+The Agentspan project is licensed under the MIT License. SpecOps re-
+implements the relevant primitives natively in Python and does not
+import or copy Agentspan source code. The following symbol names and
+the four-mode failure model are derived from Agentspan and re-used in
+SpecOps under independently authored Apache-2.0 implementations:
+
+  * GuardrailResult
+  * Guardrail (base type and the three concrete types: callable, regex,
+    LLM-judge)
+  * @guardrail decorator
+  * OnFail (modes: retry, raise, fix, escalate; the latter renamed
+    from Agentspan's "human")
+  * Position (tool_input, tool_output, agent_output)
+  * api_tool / OpenAPI auto-discovery shape
+
+The design rationale and per-symbol attribution are documented in
+docs/design/durability-and-tooling.md and docs/adr/0001-agentspan-idea-
+adoption.md.

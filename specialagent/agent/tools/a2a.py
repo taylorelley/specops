@@ -112,6 +112,8 @@ class A2ACallTool(_A2AToolBase):
 class A2ADiscoverTool(_A2AToolBase):
     """Discover other agents available in the same team."""
 
+    replay_safety = "safe"
+
     @property
     def name(self) -> str:
         return "a2a_discover"

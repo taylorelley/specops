@@ -380,3 +380,83 @@ export type TaskComment = {
   content: string;
   created_at: string;
 };
+
+export type ApiToolEntry = {
+  id: string;
+  name: string;
+  description?: string;
+  author?: string;
+  version?: string;
+  categories?: string[];
+  spec_url: string;
+  headers?: Record<string, string>;
+  default_max_tools?: number;
+  required_env?: string[];
+  homepage?: string;
+  source?: "bundled" | "self-hosted";
+};
+
+export type AddCustomApiToolPayload = {
+  id: string;
+  name: string;
+  description?: string;
+  author?: string;
+  version?: string;
+  categories?: string[];
+  homepage?: string;
+  spec_url: string;
+  headers?: Record<string, string>;
+  default_max_tools?: number;
+  required_env?: string[];
+};
+
+export type InstallApiToolPayload = {
+  spec_id: string;
+  headers?: Record<string, string>;
+  enabled_operations?: string[] | null;
+  max_tools?: number;
+  base_url_override?: string | null;
+  role_hint?: string;
+};
+
+export type AgentApiToolEntry = {
+  spec_id: string;
+  spec_url: string;
+  max_tools: number;
+  enabled_operations?: string[] | null;
+  role_hint?: string;
+};
+
+export type Execution = {
+  id: string;
+  agent_id: string;
+  plan_id?: string;
+  session_key?: string;
+  channel?: string;
+  chat_id?: string;
+  status: "running" | "paused" | "failed" | "completed";
+  last_step_id?: string;
+  error_message?: string;
+  pending_resume?: number;
+  created_at: string;
+  updated_at: string;
+  paused_at?: string;
+};
+
+export type ExecutionEvent = {
+  id: number;
+  execution_id: string;
+  event_id: string;
+  step_id?: string;
+  event_kind: string;
+  replay_safety?: string | null;
+  idempotency_key?: string | null;
+  tool_name?: string | null;
+  result_status?: string | null;
+  duration_ms?: number | null;
+  payload_json?: string | null;
+  timestamp: string;
+  agent_id?: string;
+};
+
+export type ResolveDecision = "approve" | "reject";

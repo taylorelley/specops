@@ -18,6 +18,26 @@ class Base(BaseModel):
     secret_fields: ClassVar[frozenset[str]] = frozenset()
 
 
+class GuardrailRef(Base):
+    """One guardrail attachment.
+
+    Resolution at agent start (in ``GuardrailRunner.resolve_refs``):
+      * If ``name`` matches a registered guardrail, that wins.
+      * Else, ``pattern`` defines an inline ``RegexGuardrail``.
+      * Else, ``prompt`` defines an inline ``LLMGuardrail``.
+
+    ``on_fail`` controls what happens when the guardrail fails;
+    ``max_retries`` bounds the ``retry`` mode per (step, guardrail).
+    """
+
+    name: str = ""
+    on_fail: str = "retry"
+    max_retries: int = Field(default=3, alias="maxRetries")
+    pattern: str | None = None
+    prompt: str | None = None
+    regex_mode: str = Field(default="block", alias="regexMode")
+
+
 class WhatsAppConfig(Base):
     secret_fields: ClassVar[frozenset[str]] = frozenset()
     enabled: bool = False
@@ -170,6 +190,8 @@ class AgentDefaults(Base):
     fault_tolerance: FaultToleranceConfig = Field(
         default_factory=FaultToleranceConfig, alias="faultTolerance"
     )
+    # Guardrails applied to the final assistant message (Position.AGENT_OUTPUT).
+    guardrails: list[GuardrailRef] = Field(default_factory=list)
 
 
 class AgentsConfig(Base):
@@ -260,6 +282,8 @@ class MCPConfigField(Base):
 
 
 class MCPServerConfig(Base):
+    secret_fields: ClassVar[frozenset[str]] = frozenset({"headers", "env"})
+
     command: str = ""
     args: list[str] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)
@@ -269,6 +293,31 @@ class MCPServerConfig(Base):
     # Config schema for the server (populated at install time from the registry).
     # Standard JSON Schema fields drive the UI: type, format, enum, x-widget, etc.
     config_schema: list[MCPConfigField] = Field(default_factory=list, alias="configSchema")
+    # Guardrails applied to every tool exposed by this server.
+    guardrails: list[GuardrailRef] = Field(default_factory=list)
+
+
+class OpenAPIToolConfig(Base):
+    """Installed OpenAPI/Swagger spec generating one tool per operation.
+
+    Headers carry ``${VAR}`` placeholders resolved at runtime against the
+    agent's encrypted variable vault, so credentials never live on disk
+    in plaintext. The tool dispatcher treats individual operations as
+    side-effecting (replay-safety ``checkpoint``) by default; specs may
+    annotate read-only operations with ``x-replay-safety: safe``.
+    """
+
+    secret_fields: ClassVar[frozenset[str]] = frozenset({"headers"})
+
+    spec_id: str = Field(default="", alias="specId")
+    spec_url: str = Field(default="", alias="specUrl")
+    headers: dict[str, str] = Field(default_factory=dict)
+    enabled_operations: list[str] | None = Field(default=None, alias="enabledOperations")
+    max_tools: int = Field(default=64, alias="maxTools")
+    base_url_override: str | None = Field(default=None, alias="baseUrlOverride")
+    role_hint: str = Field(default="", alias="roleHint")
+    # Guardrails applied to every operation generated from this spec.
+    guardrails: list[GuardrailRef] = Field(default_factory=list)
 
 
 class SoftwareEntry(Base):
@@ -300,6 +349,11 @@ class ToolsConfig(Base):
     mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
     software: dict[str, SoftwareEntry] = Field(default_factory=dict)
     approval: ToolApprovalConfig = Field(default_factory=ToolApprovalConfig)
+    openapi_tools: dict[str, OpenAPIToolConfig] = Field(default_factory=dict, alias="openapiTools")
+    # Default guardrails applied to every tool's input/output. Per-tool
+    # overrides come via Tool.guardrails (class-level) plus
+    # OpenAPIToolConfig.guardrails / MCPServerConfig.guardrails.
+    guardrails: list[GuardrailRef] = Field(default_factory=list)
 
 
 class HeartbeatConfig(Base):
@@ -377,11 +431,19 @@ def get_model_for_path(root: type[BaseModel], path: tuple[str, ...]) -> type[Bas
 
     Used so redaction and restore_secrets can use model.secret_fields instead of
     hardcoded key names. E.g. get_model_for_path(Config, ("channels", "slack")) -> SlackConfig.
+
+    For ``dict[str, SomeModel]`` fields (like ``tools.mcp_servers`` or
+    ``tools.openapi_tools``) the function descends into ``SomeModel`` and
+    treats the next path segment as the dict key, skipping it.
     """
     if not path:
         return root
     current: type[BaseModel] | None = root
+    skip_next = False
     for segment in path:
+        if skip_next:
+            skip_next = False
+            continue
         if current is None or not hasattr(current, "model_fields"):
             return None
         if segment not in current.model_fields:
@@ -391,6 +453,15 @@ def get_model_for_path(root: type[BaseModel], path: tuple[str, ...]) -> type[Bas
         args = get_args(ann)
         if origin is Union and args:
             ann = next((a for a in args if a is not type(None)), ann)
+            origin = get_origin(ann)
+            args = get_args(ann)
+        if origin is dict and len(args) >= 2:
+            value_type = args[1]
+            if isinstance(value_type, type) and issubclass(value_type, BaseModel):
+                current = value_type
+                skip_next = True
+                continue
+            return None
         if isinstance(ann, type) and issubclass(ann, BaseModel):
             current = ann
         else:

@@ -3,11 +3,13 @@
 import json
 import time
 from pathlib import Path
+from typing import Mapping
 
 from loguru import logger
 
 from specialagent.agent.agent_fs import AgentFS
 from specialagent.agent.approval import ToolApprovalManager
+from specialagent.agent.loop.guardrails import EnforcementOutcome, GuardrailRunner
 from specialagent.agent.subagent import SubagentManager
 from specialagent.agent.tools.a2a import get_a2a_tools
 from specialagent.agent.tools.cron import CronTool
@@ -19,6 +21,10 @@ from specialagent.agent.tools.filesystem import (
     WriteFileTool,
 )
 from specialagent.agent.tools.message import MessageTool
+from specialagent.agent.tools.openapi import (
+    fetch_spec,
+    generate_tools_from_config,
+)
 from specialagent.agent.tools.plan import get_plan_tools
 from specialagent.agent.tools.policy import ShellCommandPolicy
 from specialagent.agent.tools.registry import ToolRegistry
@@ -28,7 +34,13 @@ from specialagent.agent.tools.utils import redact_tool_args, truncate_output
 from specialagent.agent.tools.web import WebFetchTool, WebSearchTool
 from specialagent.providers.base import ToolCallRequest
 from specops_lib.bus import InboundMessage, MessageBus
-from specops_lib.config.schema import ExecToolConfig, WebSearchConfig
+from specops_lib.config.schema import ExecToolConfig, OpenAPIToolConfig, WebSearchConfig
+from specops_lib.execution import (
+    JournalLookup,
+    NullJournal,
+    derive_idempotency_key,
+)
+from specops_lib.guardrails import Guardrail
 
 
 class ToolsManager:
@@ -53,6 +65,13 @@ class ToolsManager:
         agent_id: str = "",
         cron_service=None,
         on_event=None,
+        journal_lookup: JournalLookup | None = None,
+        var_lookup: Mapping[str, str] | None = None,
+        openapi_tools_config: dict[str, OpenAPIToolConfig] | None = None,
+        api_tool_cache_dir: Path | None = None,
+        guardrail_runner: GuardrailRunner | None = None,
+        tool_guardrails: Mapping[str, list[Guardrail]] | None = None,
+        default_tool_guardrails: list[Guardrail] | None = None,
     ) -> None:
         self.tools = tools
         self.mcp = mcp
@@ -71,6 +90,15 @@ class ToolsManager:
         self._agent_id = agent_id
         self._cron_service = cron_service
         self._on_event = on_event
+        self._journal: JournalLookup = journal_lookup or NullJournal()
+        self._var_lookup: dict[str, str] = dict(var_lookup or {})
+        self._openapi_tools_config: dict[str, OpenAPIToolConfig] = dict(openapi_tools_config or {})
+        self._api_tool_cache_dir = api_tool_cache_dir
+        self._guardrail_runner = guardrail_runner
+        self._tool_guardrails: dict[str, list[Guardrail]] = {
+            k: list(v) for k, v in (tool_guardrails or {}).items()
+        }
+        self._default_tool_guardrails: list[Guardrail] = list(default_tool_guardrails or [])
 
     def register_default_tools(self) -> None:
         """Register the default set of tools."""
@@ -113,6 +141,49 @@ class ToolsManager:
 
         self.tools.register_plugins()
 
+    async def register_openapi_tools(self) -> dict[str, int]:
+        """Fetch each configured OpenAPI/Swagger/Postman spec and instantiate
+        one :class:`GeneratedHttpTool` per filtered operation.
+
+        Returns a ``{spec_id: tool_count}`` map for diagnostic logging.
+        Failures (network, parse) are logged and skip that spec but do
+        not prevent other configs or other tools from registering.
+        """
+        result: dict[str, int] = {}
+        for spec_id, cfg in self._openapi_tools_config.items():
+            cfg_with_id = cfg if cfg.spec_id else cfg.model_copy(update={"spec_id": spec_id})
+            cache_path: Path | None = None
+            if self._api_tool_cache_dir:
+                cache_path = self._api_tool_cache_dir / f"{spec_id}.json"
+            try:
+                spec_text = await fetch_spec(cfg_with_id.spec_url, cache_path=cache_path)
+            except Exception as exc:
+                logger.warning(
+                    "[openapi] Spec fetch failed: spec_id={}, url={}, err={}",
+                    spec_id,
+                    cfg_with_id.spec_url,
+                    exc,
+                )
+                result[spec_id] = 0
+                continue
+            try:
+                generated = generate_tools_from_config(
+                    cfg_with_id,
+                    spec_text=spec_text,
+                    var_lookup=self._var_lookup,
+                    ssrf_protection=self._ssrf_protection,
+                    max_chars=self._max_tool_output_chars,
+                )
+            except Exception as exc:
+                logger.warning("[openapi] Spec generate failed: spec_id={}, err={}", spec_id, exc)
+                result[spec_id] = 0
+                continue
+            for tool in generated:
+                self.tools.register(tool)
+            result[spec_id] = len(generated)
+            logger.info("[openapi] Registered {} tool(s) for spec_id={}", len(generated), spec_id)
+        return result
+
     def set_tool_context(self, channel: str, chat_id: str) -> None:
         """Update context for tools that need routing info (message, spawn, cron).
 
@@ -134,18 +205,86 @@ class ToolsManager:
         """If this message is a yes/no reply for a pending tool approval, resolve the future and return True."""
         return self._approval.try_resolve(msg)
 
+    def guardrails_for_tool(self, tool_name: str) -> list[Guardrail]:
+        """Resolved guardrail instances for one tool.
+
+        Lookup order (each contributes; results are concatenated):
+          1. Exact match in ``_tool_guardrails`` (legacy approval per-tool entries).
+          2. Any registered prefix that ``tool_name`` startswith — used
+             for ``mcp_<server>_*`` and ``api_<spec>_*`` generated tools
+             where the ToolsManager only knows the spec/server prefix at
+             config time.
+          3. Agent-default tool guardrails.
+        """
+        if not self._guardrail_runner:
+            return []
+        out: list[Guardrail] = list(self._tool_guardrails.get(tool_name) or [])
+        for key, refs in self._tool_guardrails.items():
+            if key.endswith("_") and tool_name.startswith(key):
+                out.extend(refs)
+        out.extend(self._default_tool_guardrails)
+        return out
+
+    async def _enforce_guardrails(
+        self,
+        *,
+        position: str,
+        content: str,
+        tool_call: ToolCallRequest,
+        execution_id: str,
+        step_id: str,
+        plan_id: str,
+    ) -> EnforcementOutcome:
+        guardrails = self.guardrails_for_tool(tool_call.name)
+        if not guardrails or not self._guardrail_runner:
+            return EnforcementOutcome(decision="pass", content=content)
+        return await self._guardrail_runner.enforce(
+            content=content,
+            guardrails=guardrails,
+            position=position,  # type: ignore[arg-type]
+            tool_name=tool_call.name,
+            args=tool_call.arguments,
+            execution_id=execution_id or None,
+            step_id=step_id or None,
+            plan_id=plan_id,
+        )
+
     async def execute_tool(
         self,
         tool_call: ToolCallRequest,
         channel: str,
         chat_id: str,
         plan_id: str = "",
+        execution_id: str = "",
+        step_id: str = "",
     ) -> tuple[str, str]:
-        """Execute a single tool call with logging and truncation.
+        """Execute a single tool call with guardrails, logging, journal, and truncation.
 
-        If tool approval is ask_before_run, prompts the user in-channel and waits for approval.
-        Returns (tool_call_id, result_text).
+        Order of operations:
+          1. Approval gate (legacy ``ToolApprovalConfig``).
+          2. ``tool_input`` guardrails.
+          3. Journal lookup for prior tool_result (resume short-circuit).
+          4. Emit ``tool_call`` event, dispatch the tool, emit ``tool_result``.
+          5. ``tool_output`` guardrails.
+
+        Backwards-compatible: when no ``GuardrailRunner`` is configured,
+        steps 2 and 5 are no-ops and the dispatch path is identical to
+        Phase 1.
         """
+        # Phase 3: tool_input guardrails (before any journal/dispatch work).
+        if self._guardrail_runner:
+            outcome = await self._enforce_guardrails(
+                position="tool_input",
+                content=json.dumps(tool_call.arguments, ensure_ascii=False),
+                tool_call=tool_call,
+                execution_id=execution_id,
+                step_id=step_id,
+                plan_id=plan_id,
+            )
+            short_circuit = _outcome_short_circuit(outcome, tool_call.name, "tool_input")
+            if short_circuit is not None:
+                return tool_call.id, short_circuit
+
         mode = self._approval.get_mode(tool_call.name)
         if mode == "ask_before_run":
             logger.info(
@@ -169,7 +308,45 @@ class ToolsManager:
                     "Ask the user if they want you to try again.",
                 )
 
+        tool_obj = self.tools.get(tool_call.name) or self.mcp.get(tool_call.name)
+        replay_safety = (
+            getattr(tool_obj, "replay_safety", "checkpoint") if tool_obj else "checkpoint"
+        )
+        idem_key: str | None = None
+        if execution_id:
+            override = tool_obj.compute_idempotency_key(tool_call.arguments) if tool_obj else None
+            idem_key = override or derive_idempotency_key(
+                execution_id, step_id or "step:0", tool_call.name, tool_call.arguments
+            )
+
         args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
+
+        if execution_id and idem_key and replay_safety in ("checkpoint", "skip"):
+            prior_result = await self._journal.find_tool_result(execution_id, idem_key)
+            if prior_result and (prior_result.get("result_status") == "ok"):
+                cached = prior_result.get("payload_json") or prior_result.get("content") or ""
+                logger.info(
+                    "[journal] Reusing prior tool_result for tool={}, exec={}, idem={}",
+                    tool_call.name,
+                    execution_id,
+                    idem_key[:12],
+                )
+                return tool_call.id, cached
+            prior_call = await self._journal.find_tool_call(execution_id, idem_key)
+            if prior_call and not prior_result:
+                if replay_safety == "skip":
+                    msg = (
+                        f"[RESUME UNSAFE] '{tool_call.name}' was started in a prior execution "
+                        "but did not complete. Resume cannot continue safely; aborting this step."
+                    )
+                    return tool_call.id, msg
+                msg = (
+                    f"[INTERRUPTED] A prior call to '{tool_call.name}' with the same arguments "
+                    "was started but never confirmed complete. Treat the side effects as "
+                    "unknown and decide whether to ask the user before retrying."
+                )
+                return tool_call.id, msg
+
         logger.info("Tool call: {}({})", tool_call.name, args_str[:200])
         start = time.perf_counter()
         result_status = "ok"
@@ -182,6 +359,11 @@ class ToolsManager:
                 tool_name=tool_call.name,
                 tool_args_redacted=redact_tool_args(tool_call.arguments),
                 plan_id=plan_id,
+                execution_id=execution_id or None,
+                step_id=step_id or None,
+                event_kind="tool_call" if execution_id else None,
+                replay_safety=replay_safety if execution_id else None,
+                idempotency_key=idem_key,
             )
 
         try:
@@ -205,5 +387,55 @@ class ToolsManager:
                 result_status=result_status,
                 duration_ms=duration_ms,
                 plan_id=plan_id,
+                execution_id=execution_id or None,
+                step_id=step_id or None,
+                event_kind="tool_result" if execution_id else None,
+                replay_safety=replay_safety if execution_id else None,
+                idempotency_key=idem_key,
+                payload_json=result if execution_id else None,
             )
+
+        # Phase 3: tool_output guardrails on the dispatched result.
+        if self._guardrail_runner and result_status == "ok":
+            outcome = await self._enforce_guardrails(
+                position="tool_output",
+                content=str(result),
+                tool_call=tool_call,
+                execution_id=execution_id,
+                step_id=step_id,
+                plan_id=plan_id,
+            )
+            if outcome.decision == "replace":
+                result = outcome.content
+            else:
+                short_circuit = _outcome_short_circuit(outcome, tool_call.name, "tool_output")
+                if short_circuit is not None:
+                    result = short_circuit
+
         return tool_call.id, result
+
+
+def _outcome_short_circuit(
+    outcome: EnforcementOutcome, tool_name: str, position: str
+) -> str | None:
+    """Translate a non-pass guardrail outcome into the synthetic
+    tool-result string the LLM sees. Returns ``None`` when the outcome
+    passed and execution should continue normally; ``replace`` is
+    handled separately by the caller because it modifies content."""
+    if outcome.passed or outcome.decision == "replace":
+        return None
+    if outcome.decision == "retry":
+        return (
+            f"[GUARDRAIL retry on {position}: {outcome.guardrail_name}] "
+            f"{outcome.retry_message} "
+            f"Adjust arguments / output and try '{tool_name}' again."
+        )
+    if outcome.decision == "raise":
+        return f"[GUARDRAIL raise on {position}: {outcome.guardrail_name}] {outcome.error_message}"
+    if outcome.decision == "pause":
+        return (
+            f"[GUARDRAIL escalate on {position}: {outcome.guardrail_name}] "
+            f"{outcome.pause_payload.get('reason', '')} "
+            "Execution paused for human approval; do not proceed without it."
+        )
+    return None

@@ -50,11 +50,17 @@ class AgentConfigStore:
         updates: dict,
         *,
         replace_keys: list[tuple[str, ...]] | None = None,
+        delete_keys: list[tuple[str, ...]] | None = None,
     ) -> dict:
         """Merge updates into stored config. Returns full merged config.
 
         When replace_keys is set (e.g. [("tools", "software")]), those paths are
         fully replaced instead of merged, so uninstalled items are removed.
+
+        When delete_keys is set (e.g. [("tools", "openapi_tools", "stripe")]),
+        those exact paths are popped from the merged config under the same
+        write transaction as ``updates``. Use this for surgical removals
+        without a read-modify-write race against concurrent installs.
         """
         now = datetime.now(timezone.utc).isoformat()
         updates = {k: v for k, v in updates.items() if k != "secrets"}
@@ -77,6 +83,16 @@ class AgentConfigStore:
                     for k in path[:-1]:
                         target = target.setdefault(k, {})
                     target[path[-1]] = d
+        if delete_keys:
+            for path in delete_keys:
+                target = merged
+                for k in path[:-1]:
+                    if not isinstance(target, dict) or k not in target:
+                        target = None
+                        break
+                    target = target[k]
+                if isinstance(target, dict):
+                    target.pop(path[-1], None)
         merged.pop("secrets", None)
         restore_secrets_from_existing(merged, existing)
 

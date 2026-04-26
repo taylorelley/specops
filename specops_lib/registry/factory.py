@@ -1,9 +1,11 @@
-"""Factory for registry implementations. Returns configured SkillRegistry, MCPRegistry, SoftwareRegistry, and PlanTemplateRegistry."""
+"""Factory for registry implementations. Returns configured SkillRegistry, MCPRegistry, SoftwareRegistry, PlanTemplateRegistry, and ApiToolRegistry."""
 
+from specops_lib.apitoolregistry import YamlApiToolRegistry
 from specops_lib.mcpregistry.official_mcp import OfficialMCPRegistry
 from specops_lib.mcpregistry.yaml_catalog import YamlMCPRegistry
 from specops_lib.plantemplateregistry import YamlPlanTemplateRegistry
 from specops_lib.registry.protocols import (
+    ApiToolRegistry,
     MCPRegistry,
     PlanTemplateRegistry,
     SkillRegistry,
@@ -17,6 +19,7 @@ _skill_registry: YamlSkillRegistry | None = None
 _mcp_registry: YamlMCPRegistry | None = None
 _software_registry: YamlSoftwareRegistry | None = None
 _plan_template_registry: YamlPlanTemplateRegistry | None = None
+_api_tool_registry: YamlApiToolRegistry | None = None
 
 
 def get_skill_registry() -> SkillRegistry:
@@ -67,3 +70,14 @@ def get_plan_template_registry() -> PlanTemplateRegistry:
         custom_path = root / "admin" / "custom_plan_templates.yaml"
         _plan_template_registry = YamlPlanTemplateRegistry(custom_catalog_path=custom_path)
     return _plan_template_registry
+
+
+def get_api_tool_registry() -> ApiToolRegistry:
+    """Return the ApiToolRegistry implementation (marketplace YAML catalog + custom entries)."""
+    global _api_tool_registry
+    if _api_tool_registry is None:
+        storage = get_storage_backend()
+        root = get_storage_root(storage)
+        custom_path = root / "admin" / "custom_api_tools.yaml"
+        _api_tool_registry = YamlApiToolRegistry(custom_catalog_path=custom_path)
+    return _api_tool_registry

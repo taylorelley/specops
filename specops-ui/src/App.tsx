@@ -12,6 +12,7 @@ import LiveLogs from "./pages/LiveLogs";
 import ConfigEditor from "./pages/ConfigEditor";
 import AdminSettings from "./pages/AdminSettings";
 import Marketplace from "./pages/Marketplace";
+import PendingApprovals from "./pages/PendingApprovals";
 
 function Protected({ children }: { children: React.ReactNode }) {
   const { token, loading } = useAuth();
@@ -41,6 +42,7 @@ export default function App() {
         <Route path="agents/:agentId/logs" element={<LiveLogs />} />
         <Route path="agents/:agentId/config" element={<ConfigEditor />} />
         <Route path="marketplace" element={<Marketplace />} />
+        <Route path="approvals" element={<PendingApprovals />} />
         <Route path="admin/settings" element={<AdminSettings />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

@@ -1,0 +1,64 @@
+- id: stripe
+  name: Stripe
+  description: >-
+    Stripe REST API. Charges, customers, subscriptions, invoices, and payments.
+    Spec is large; default tool cap pre-filters to the most relevant
+    operations against the agent's role hint.
+  author: Stripe
+  version: latest
+  categories:
+    - payments
+    - finance
+    - api
+  # The official spec is published in stripe/openapi on GitHub. Verified 2026-04-25.
+  spec_url: https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.json
+  headers:
+    Authorization: "Bearer ${STRIPE_KEY}"
+  default_max_tools: 32
+  required_env:
+    - STRIPE_KEY
+  homepage: https://stripe.com/docs/api
+
+- id: github
+  name: GitHub REST
+  description: >-
+    GitHub REST API v3. Issues, pull requests, repositories, releases,
+    actions, and project management.
+  author: GitHub
+  version: 2022-11-28
+  categories:
+    - devtools
+    - source-control
+    - api
+  # Pinned to a specific release tag so cache invalidation can't silently
+  # change the API surface. See github/rest-api-description for newer tags.
+  spec_url: https://raw.githubusercontent.com/github/rest-api-description/v1.1.4/descriptions/api.github.com/api.github.com.json
+  headers:
+    Authorization: "Bearer ${GITHUB_TOKEN}"
+    Accept: "application/vnd.github+json"
+    X-GitHub-Api-Version: "2022-11-28"
+  default_max_tools: 48
+  required_env:
+    - GITHUB_TOKEN
+  homepage: https://docs.github.com/en/rest
+
+- id: openai
+  name: OpenAI Platform
+  description: >-
+    OpenAI REST API. Chat completions, files, fine-tuning, embeddings,
+    audio, and image generation. Useful when an agent needs to drive
+    a separate provider account.
+  author: OpenAI
+  version: "2.0.0"
+  categories:
+    - llm
+    - api
+  # Pinned to release tag 2.0.0; the master branch was renamed and the
+  # main branch returns 404 as of 2026-04-25.
+  spec_url: https://raw.githubusercontent.com/openai/openai-openapi/2.0.0/openapi.yaml
+  headers:
+    Authorization: "Bearer ${OPENAI_API_KEY}"
+  default_max_tools: 24
+  required_env:
+    - OPENAI_API_KEY
+  homepage: https://platform.openai.com/docs/api-reference

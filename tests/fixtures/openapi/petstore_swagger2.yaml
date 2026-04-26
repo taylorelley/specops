@@ -1,0 +1,30 @@
+swagger: "2.0"
+info:
+  title: Petstore Swagger 2
+  version: "1.0"
+host: api.example.com
+basePath: /v2
+schemes: [https]
+paths:
+  /pets:
+    get:
+      operationId: listPets
+      summary: List pets
+      tags: [pets]
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          type: integer
+    post:
+      operationId: addPet
+      summary: Add pet
+      tags: [pets]
+      parameters:
+        - name: pet
+          in: body
+          required: true
+          schema:
+            type: object
+            properties:
+              name: { type: string }

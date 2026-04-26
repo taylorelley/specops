@@ -2,18 +2,21 @@
 
 import asyncio
 import json
+import uuid
 from typing import Awaitable, Callable
 
 from loguru import logger
 
 from specialagent.agent.consolidator import MemoryConsolidator
 from specialagent.agent.context import ContextBuilder
+from specialagent.agent.loop.guardrails import GuardrailRunner
 from specialagent.agent.loop.mcp import McpManager
 from specialagent.agent.loop.tools import ToolsManager
 from specialagent.agent.tools.utils import strip_think, tool_hint
 from specialagent.core.session import Session, SessionManager
 from specialagent.providers.base import LLMProvider
 from specops_lib.bus import InboundMessage, MessageBus, OutboundMessage
+from specops_lib.guardrails import Guardrail
 
 
 def _on_consolidate_done(task: asyncio.Task) -> None:
@@ -41,6 +44,8 @@ class SessionProcessor:
         memory_window: int,
         on_event: Callable[..., Awaitable[None]] | None = None,
         software_management=None,
+        guardrail_runner: GuardrailRunner | None = None,
+        agent_output_guardrails: list[Guardrail] | None = None,
     ) -> None:
         self._tools_manager = tools_manager
         self._mcp_manager = mcp_manager
@@ -56,6 +61,8 @@ class SessionProcessor:
         self._memory_window = memory_window
         self._on_event = on_event
         self._software_management = software_management
+        self._guardrail_runner = guardrail_runner
+        self._agent_output_guardrails: list[Guardrail] = list(agent_output_guardrails or [])
 
     async def run_agent_loop(
         self,
@@ -64,6 +71,7 @@ class SessionProcessor:
         channel: str = "cli",
         chat_id: str = "direct",
         plan_id: str = "",
+        execution_id: str = "",
     ) -> tuple[str | None, list[str], list[dict]]:
         """
         Run the agent iteration loop.
@@ -74,6 +82,10 @@ class SessionProcessor:
             channel: Channel name (for tool approval prompts).
             chat_id: Chat ID (for tool approval prompts).
             plan_id: Plan ID when in plan context (for tool approval routing).
+            execution_id: Durable-journal execution id for this turn. When
+                present, step boundary events and tool_call/tool_result
+                events are emitted so a fresh worker can resume after a
+                crash without re-executing side-effecting tools.
 
         Returns:
             Tuple of (final_content, list_of_tools_used, turn_messages).
@@ -89,6 +101,18 @@ class SessionProcessor:
 
         while iteration < self._max_iterations:
             iteration += 1
+            step_id = f"step:{iteration - 1}" if execution_id else ""
+
+            if execution_id and self._on_event:
+                await self._on_event(
+                    "step_started",
+                    "",
+                    f"step {iteration - 1}",
+                    plan_id=plan_id,
+                    execution_id=execution_id,
+                    step_id=step_id,
+                    event_kind="step_started",
+                )
 
             all_tool_defs = (
                 self._tools_manager.tools.get_definitions()
@@ -127,7 +151,12 @@ class SessionProcessor:
 
                 if len(tool_calls) == 1:
                     tc_id, result = await self._tools_manager.execute_tool(
-                        tool_calls[0], channel=channel, chat_id=chat_id, plan_id=plan_id
+                        tool_calls[0],
+                        channel=channel,
+                        chat_id=chat_id,
+                        plan_id=plan_id,
+                        execution_id=execution_id,
+                        step_id=step_id,
                     )
                     messages = self._context.add_tool_result(
                         messages, tc_id, tool_calls[0].name, result
@@ -136,26 +165,106 @@ class SessionProcessor:
                     results = await asyncio.gather(
                         *(
                             self._tools_manager.execute_tool(
-                                tc, channel=channel, chat_id=chat_id, plan_id=plan_id
+                                tc,
+                                channel=channel,
+                                chat_id=chat_id,
+                                plan_id=plan_id,
+                                execution_id=execution_id,
+                                step_id=step_id,
                             )
                             for tc in tool_calls
                         )
                     )
                     for tc, (tc_id, result) in zip(tool_calls, results):
                         messages = self._context.add_tool_result(messages, tc_id, tc.name, result)
+
+                if execution_id and self._on_event:
+                    await self._on_event(
+                        "step_completed",
+                        "",
+                        f"step {iteration - 1} done",
+                        plan_id=plan_id,
+                        execution_id=execution_id,
+                        step_id=step_id,
+                        event_kind="step_completed",
+                    )
             else:
                 final_content = strip_think(response.content)
+                if execution_id and self._on_event:
+                    await self._on_event(
+                        "step_completed",
+                        "",
+                        f"step {iteration - 1} final",
+                        plan_id=plan_id,
+                        execution_id=execution_id,
+                        step_id=step_id,
+                        event_kind="step_completed",
+                    )
+                # Phase 3: agent_output guardrails on the final assistant message.
+                final_content = await self._enforce_agent_output(
+                    final_content,
+                    execution_id=execution_id,
+                    step_id=step_id,
+                    plan_id=plan_id,
+                )
                 break
 
         # Collect all messages added during this turn (excludes system prompt + prior history).
         turn_messages = messages[turn_start_idx:]
         return final_content, tools_used, turn_messages
 
+    async def _enforce_agent_output(
+        self,
+        content: str | None,
+        *,
+        execution_id: str,
+        step_id: str,
+        plan_id: str,
+    ) -> str | None:
+        """Apply ``agent_output`` guardrails to the final assistant
+        message. ``replace`` and ``retry`` substitute the message body
+        in place; ``raise`` and ``escalate`` surface as a synthetic
+        marker so the user sees the guardrail's reason instead of the
+        original output.
+        """
+        if content is None or not self._guardrail_runner or not self._agent_output_guardrails:
+            return content
+        outcome = await self._guardrail_runner.enforce(
+            content=content,
+            guardrails=self._agent_output_guardrails,
+            position="agent_output",
+            execution_id=execution_id or None,
+            step_id=step_id or None,
+            plan_id=plan_id,
+        )
+        if outcome.passed:
+            return content
+        if outcome.decision == "replace":
+            return outcome.content
+        if outcome.decision == "retry":
+            return (
+                f"[GUARDRAIL retry on agent_output: {outcome.guardrail_name}] "
+                f"{outcome.retry_message}\n\nOriginal draft:\n{content}"
+            )
+        if outcome.decision == "raise":
+            return (
+                f"[GUARDRAIL raise on agent_output: {outcome.guardrail_name}] "
+                f"{outcome.error_message}"
+            )
+        if outcome.decision == "pause":
+            return (
+                f"[GUARDRAIL escalate on agent_output: {outcome.guardrail_name}] "
+                f"{outcome.pause_payload.get('reason', '')} "
+                "Reply pending human approval."
+            )
+        return content
+
     async def process_message(
         self,
         msg: InboundMessage,
         session_key: str | None = None,
         on_progress: Callable[[str], Awaitable[None]] | None = None,
+        execution_id: str | None = None,
     ) -> OutboundMessage | None:
         """
         Process a single inbound message.
@@ -241,12 +350,33 @@ class SessionProcessor:
                 )
             )
 
+        is_resume = execution_id is not None
+        if not execution_id:
+            execution_id = uuid.uuid4().hex
+        if self._on_event and not is_resume:
+            await self._on_event(
+                "execution_started",
+                msg.channel,
+                f"execution {execution_id[:12]} for {msg.channel}:{msg.chat_id}",
+                plan_id=_plan_id,
+                execution_id=execution_id,
+                event_kind="execution_started",
+                payload_json=json.dumps(
+                    {
+                        "channel": msg.channel,
+                        "chat_id": msg.chat_id,
+                        "session_key": key,
+                    }
+                ),
+            )
+
         final_content, tools_used, turn_messages = await self.run_agent_loop(
             initial_messages,
             on_progress=on_progress or _bus_progress,
             channel=msg.channel,
             chat_id=msg.chat_id,
             plan_id=_plan_id,
+            execution_id=execution_id,
         )
 
         if final_content is None:
@@ -313,11 +443,29 @@ class SessionProcessor:
             else None,
             model=self._model,
         )
+        execution_id = uuid.uuid4().hex
+        if self._on_event:
+            await self._on_event(
+                "execution_started",
+                origin_channel,
+                f"execution {execution_id[:12]} for {origin_channel}:{origin_chat_id}",
+                plan_id=_plan_id,
+                execution_id=execution_id,
+                event_kind="execution_started",
+                payload_json=json.dumps(
+                    {
+                        "channel": origin_channel,
+                        "chat_id": origin_chat_id,
+                        "session_key": session_key,
+                    }
+                ),
+            )
         final_content, _, turn_messages = await self.run_agent_loop(
             initial_messages,
             channel=origin_channel,
             chat_id=origin_chat_id,
             plan_id=_plan_id,
+            execution_id=execution_id,
         )
 
         if final_content is None:
@@ -341,6 +489,7 @@ class SessionProcessor:
         channel: str = "cli",
         chat_id: str = "direct",
         on_progress: Callable[[str], Awaitable[None]] | None = None,
+        execution_id: str | None = None,
     ) -> str:
         """
         Process a message directly (for CLI or cron usage).
@@ -359,7 +508,12 @@ class SessionProcessor:
         await self._mcp_manager.await_connected()
         msg = InboundMessage(channel=channel, sender_id="user", chat_id=chat_id, content=content)
 
-        response = await self.process_message(msg, session_key=session_key, on_progress=on_progress)
+        response = await self.process_message(
+            msg,
+            session_key=session_key,
+            on_progress=on_progress,
+            execution_id=execution_id,
+        )
         if response:
             await self._bus.publish_outbound(response)
         return response.content if response else ""

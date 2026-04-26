@@ -2,9 +2,11 @@
 
 import re
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, ClassVar, Literal
 
 _INVALID_TOOL_NAME_CHARS = re.compile(r"[^a-zA-Z0-9_.\-:]")
+
+ReplaySafety = Literal["safe", "checkpoint", "skip"]
 
 
 def sanitize_tool_name(name: str) -> str:
@@ -34,6 +36,30 @@ class Tool(ABC):
         "array": list,
         "object": dict,
     }
+
+    # Replay-safety classification used by the durable execution journal.
+    # "safe": tool is idempotent / pure-read; resume always re-runs.
+    # "checkpoint": tool has external side effects; resume reuses the
+    #   journaled tool_result if present, treats a half-completed call
+    #   (tool_call without tool_result) as interrupted rather than
+    #   re-running.
+    # "skip": tool must not re-run AND must not be quietly skipped on
+    #   half-completion; resume marks the execution failed.
+    replay_safety: ClassVar[ReplaySafety] = "checkpoint"
+
+    # Default guardrails attached at the class level. Each item is a
+    # GuardrailRef-shaped dict (or pydantic model). Runtime config can
+    # extend (not replace) this list via ToolsConfig.guardrails or a
+    # per-tool override on OpenAPIToolConfig / MCPServerConfig.
+    guardrails: ClassVar[list[Any]] = []
+
+    def compute_idempotency_key(self, args: dict[str, Any]) -> str | None:
+        """Override to provide a tool-specific idempotency key.
+
+        Returning ``None`` falls through to the framework's default
+        (``sha256(execution_id|step_id|tool_name|canonical_json(args))``).
+        """
+        return None
 
     @property
     @abstractmethod

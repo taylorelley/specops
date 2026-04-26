@@ -7,6 +7,7 @@ Protocol:
   - Agent may send {type: status, status: {...}} to update store (e.g. bootstrapping)
 """
 
+import json as _json
 import logging
 
 from fastapi import (
@@ -116,6 +117,8 @@ async def control_ws(websocket: WebSocket) -> None:
     storage = getattr(app.state, "storage", None)
     activity_registry: ActivityLogRegistry | None = getattr(app.state, "activity_registry", None)
     activity_events_store = getattr(app.state, "activity_events_store", None)
+    execution_events_store = getattr(app.state, "execution_events_store", None)
+    executions_store = getattr(app.state, "executions_store", None)
     manager = getattr(app.state, "ws_manager", None)
     run_store: RunStore | None = getattr(app.state, "run_store", None)
     if storage is None or activity_registry is None or manager is None or run_store is None:
@@ -230,10 +233,40 @@ async def control_ws(websocket: WebSocket) -> None:
                         result_status=e.get("result_status"),
                         duration_ms=e.get("duration_ms"),
                         event_id=e.get("event_id"),
+                        execution_id=e.get("execution_id"),
+                        step_id=e.get("step_id"),
+                        event_kind=e.get("event_kind"),
+                        replay_safety=e.get("replay_safety"),
+                        idempotency_key=e.get("idempotency_key"),
+                        payload_json=e.get("payload_json"),
                     )
                     inserted = True
                     if activity_events_store:
                         inserted = activity_events_store.insert(ev)
+                    if ev.execution_id and ev.event_kind:
+                        if executions_store and not executions_store.get(ev.execution_id):
+                            meta = {}
+                            if ev.payload_json:
+                                try:
+                                    meta = _json.loads(ev.payload_json)
+                                except Exception:
+                                    meta = {}
+                            if not isinstance(meta, dict):
+                                meta = {}
+                            executions_store.create(
+                                execution_id=ev.execution_id,
+                                agent_id=ev.agent_id or agent_id,
+                                session_key=str(meta.get("session_key", "")),
+                                channel=str(meta.get("channel", ev.channel or "")),
+                                chat_id=str(meta.get("chat_id", "")),
+                                plan_id=ev.plan_id or "",
+                            )
+                        if execution_events_store:
+                            execution_events_store.insert(ev)
+                        if executions_store and ev.event_kind == "step_completed":
+                            executions_store.set_last_step(ev.execution_id, ev.step_id or "")
+                        if executions_store and ev.event_kind == "hitl_waiting":
+                            executions_store.mark_paused(ev.execution_id)
                     if inserted:
                         log.emit(ev)
     except WebSocketDisconnect:

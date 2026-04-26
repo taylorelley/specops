@@ -25,6 +25,10 @@ export default defineConfig({
             { text: "Reverse Proxy", link: "/guide/reverse-proxy" },
             { text: "Channels", link: "/guide/channels" },
             { text: "Plans", link: "/guide/plans" },
+            { text: "Durable Runtime", link: "/guide/durable-runtime" },
+            { text: "API Tools", link: "/guide/api-tools" },
+            { text: "Guardrails", link: "/guide/guardrails" },
+            { text: "Human-in-the-Loop", link: "/guide/hitl" },
             { text: "Security", link: "/guide/security" },
           ],
         },
@@ -32,7 +36,10 @@ export default defineConfig({
       "/reference/": [
         {
           text: "Reference",
-          items: [{ text: "Terminology", link: "/reference/terminology" }],
+          items: [
+            { text: "Terminology", link: "/reference/terminology" },
+            { text: "Execution events", link: "/reference/execution-events" },
+          ],
         },
       ],
     },

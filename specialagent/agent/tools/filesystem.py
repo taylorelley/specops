@@ -9,6 +9,8 @@ from specialagent.agent.tools.base import Tool
 class ReadFileTool(Tool):
     """Read a file. Accessible: workspace/ (read/write) and profiles/ (read-only)."""
 
+    replay_safety = "safe"
+
     def __init__(self, file_service: AgentFS) -> None:
         self._fs = file_service
 
@@ -136,6 +138,8 @@ class EditFileTool(Tool):
 class ListDirTool(Tool):
     """List directory contents in workspace/ or profiles/."""
 
+    replay_safety = "safe"
+
     def __init__(self, file_service: AgentFS) -> None:
         self._fs = file_service
 
@@ -174,6 +178,8 @@ class ListDirTool(Tool):
 
 class WorkspaceTreeTool(Tool):
     """Get a hierarchical tree view of workspace or profiles. Use for overview instead of dumping list_dir."""
+
+    replay_safety = "safe"
 
     def __init__(self, file_service: AgentFS) -> None:
         self._fs = file_service

@@ -1,7 +1,7 @@
 """Agent loop: the core processing engine."""
 
 import asyncio
-from typing import Awaitable, Callable
+from typing import Any, Awaitable, Callable
 
 from loguru import logger
 
@@ -9,6 +9,12 @@ from specialagent.agent.agent_fs import AgentFS
 from specialagent.agent.approval import ToolApprovalManager
 from specialagent.agent.consolidator import MemoryConsolidator
 from specialagent.agent.context import ContextBuilder
+from specialagent.agent.loop.guardrails import (
+    GuardrailRunner,
+    legacy_approval_guardrail,
+    resolve_refs,
+    synthesize_approval_guardrails,
+)
 from specialagent.agent.loop.mcp import McpManager
 from specialagent.agent.loop.session import SessionProcessor
 from specialagent.agent.loop.tools import ToolsManager
@@ -26,10 +32,13 @@ from specops_lib.config.schema import (
     AgentDefaults,
     ControlPlaneConfig,
     ProviderConfig,
+    SecretsConfig,
     SkillsConfig,
     ToolApprovalConfig,
     ToolsConfig,
 )
+from specops_lib.execution import JournalLookup, LocalJournalLookup
+from specops_lib.guardrails import Guardrail, default_registry
 
 
 class AgentLoop:
@@ -62,6 +71,8 @@ class AgentLoop:
         session_manager: SessionManager | None = None,
         software_management: SoftwareManagement | None = None,
         on_event: Callable[..., Awaitable[None]] | None = None,
+        journal_lookup: JournalLookup | None = None,
+        secrets_config: SecretsConfig | None = None,
     ):
         self._file_service = file_service
         self.workspace = file_service.workspace_path
@@ -126,6 +137,63 @@ class AgentLoop:
             initial_servers=dict(tools.mcp_servers) if tools.mcp_servers else None,
         )
 
+        self._journal_lookup: JournalLookup = journal_lookup or LocalJournalLookup(
+            self._file_service.logs_path
+        )
+
+        secrets = secrets_config or SecretsConfig()
+        var_lookup = dict(secrets.env or {})
+        api_tool_cache_dir = self._file_service.config_path.parent / "api-tools"
+
+        guardrail_runner = GuardrailRunner(on_event=on_event, journal_lookup=self._journal_lookup)
+        # Bridge ToolApprovalConfig → escalate guardrails so legacy YAML
+        # keeps working without schema change.
+        registry = default_registry()
+        registry.register(legacy_approval_guardrail())
+        approval_synth = synthesize_approval_guardrails(tools.approval)
+        # Per-tool resolved guardrails: agent-default + per-tool config overrides
+        # + synthesised approval refs + (later, at registration time) class-level Tool.guardrails.
+        default_refs = list(tools.guardrails or [])
+        default_tool_guardrails: list[Guardrail] = resolve_refs(default_refs, registry=registry)
+        per_tool_refs: dict[str, list[Any]] = {}
+        for tool_name, refs in approval_synth.items():
+            if tool_name == "__default__":
+                # Approval default-mode means every tool gets the synth.
+                default_tool_guardrails.extend(resolve_refs(refs, registry=registry))
+            else:
+                per_tool_refs.setdefault(tool_name, []).extend(refs)
+        # MCP server guardrails: each server's refs apply to every tool the
+        # server exposes (named ``mcp_<server>_<tool>`` at runtime).
+        for server_key, server_cfg in (tools.mcp_servers or {}).items():
+            server_refs = getattr(server_cfg, "guardrails", None) or []
+            if not server_refs:
+                continue
+            prefix = f"mcp_{server_key}_"
+            per_tool_refs.setdefault(prefix, []).extend(
+                ref.model_dump() if hasattr(ref, "model_dump") else dict(ref) for ref in server_refs
+            )
+        # OpenAPI tool guardrails: same shape — one prefix per spec.
+        for spec_id, ot_cfg in (tools.openapi_tools or {}).items():
+            ot_refs = getattr(ot_cfg, "guardrails", None) or []
+            if not ot_refs:
+                continue
+            prefix = f"api_{spec_id}_"
+            per_tool_refs.setdefault(prefix, []).extend(
+                ref.model_dump() if hasattr(ref, "model_dump") else dict(ref) for ref in ot_refs
+            )
+        tool_guardrails: dict[str, list[Guardrail]] = {
+            name: resolve_refs(refs, registry=registry) for name, refs in per_tool_refs.items()
+        }
+        # Agent-output guardrails come from agent.defaults.guardrails.
+        agent_output_refs = list(getattr(defaults, "guardrails", None) or [])
+        agent_output_guardrails: list[Guardrail] = resolve_refs(
+            agent_output_refs, registry=registry
+        )
+        self._guardrail_runner = guardrail_runner
+        self._tool_guardrails = tool_guardrails
+        self._default_tool_guardrails = default_tool_guardrails
+        self._agent_output_guardrails = agent_output_guardrails
+
         self._tools_manager = ToolsManager(
             tools=self.tools,
             mcp=self.mcp,
@@ -144,6 +212,16 @@ class AgentLoop:
             agent_id=self._agent_id,
             cron_service=cron_service,
             on_event=on_event,
+            journal_lookup=self._journal_lookup,
+            var_lookup=var_lookup,
+            openapi_tools_config=dict(tools.openapi_tools or {}),
+            api_tool_cache_dir=api_tool_cache_dir,
+            guardrail_runner=guardrail_runner,
+            # ToolsManager.guardrails_for_tool does exact-name then
+            # startswith() fallback over the registered keys, so the
+            # prefix wiring here is a plain pass-through.
+            tool_guardrails=tool_guardrails,
+            default_tool_guardrails=default_tool_guardrails,
         )
         self._tools_manager.register_default_tools()
 
@@ -162,6 +240,8 @@ class AgentLoop:
             memory_window=self.memory_window,
             on_event=on_event,
             software_management=software_management,
+            guardrail_runner=guardrail_runner,
+            agent_output_guardrails=agent_output_guardrails,
         )
 
     # ── Hot-reload ────────────────────────────────────────────────────────────
@@ -257,6 +337,7 @@ class AgentLoop:
         channel: str = "cli",
         chat_id: str = "direct",
         on_progress=None,
+        execution_id: str | None = None,
     ) -> str:
         """Process a message directly (delegates to SessionProcessor)."""
         return await self._session_processor.process_direct(
@@ -265,6 +346,7 @@ class AgentLoop:
             channel=channel,
             chat_id=chat_id,
             on_progress=on_progress,
+            execution_id=execution_id,
         )
 
     # ── Main loop ─────────────────────────────────────────────────────────────
@@ -274,6 +356,10 @@ class AgentLoop:
         self._running = True
         self._mcp_manager.connect()
         await self._mcp_manager.await_connected()
+        try:
+            await self._tools_manager.register_openapi_tools()
+        except Exception as exc:
+            logger.warning("OpenAPI tool registration failed (non-fatal): {}", exc)
         logger.info("Agent loop started")
 
         while self._running:
