@@ -317,6 +317,48 @@ export type AddPlanTemplatePayload = {
   agent_ids?: string[];
 };
 
+export type AgentTemplateListItem = {
+  value: string;
+  label: string;
+  custom?: boolean;
+  editable?: boolean;
+};
+
+export type AgentTemplateDefaults = {
+  model?: string;
+  temperature?: number;
+  maxTokens?: number;
+  maxToolIterations?: number;
+  memoryWindow?: number;
+  maxToolOutputChars?: number;
+};
+
+export type CustomAgentTemplate = {
+  id: string;
+  name: string;
+  description?: string;
+  categories?: string[];
+  defaults: AgentTemplateDefaults;
+  tools?: Record<string, unknown> | null;
+  channels?: Record<string, unknown> | null;
+  mcp_servers?: Record<string, MCPServerConfig>;
+  skill_ids?: string[];
+  agents_md: string;
+  soul_md?: string | null;
+};
+
+export type CustomAgentTemplatePayload = CustomAgentTemplate;
+
+export type AgentTemplateDetail = {
+  value: string;
+  label: string;
+  custom?: boolean;
+  editable?: boolean;
+  profileFiles: { path: string; content: string }[];
+  workspaceFiles: { path: string; content: string }[];
+  payload?: CustomAgentTemplate;
+};
+
 export type PlanTask = {
   id: string;
   title: string;

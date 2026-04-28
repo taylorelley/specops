@@ -28,6 +28,7 @@ _ROOT = Path(__file__).resolve().parents[3]
 _ROLES_TEMPLATES_DIR = _ROOT / "marketplace" / "roles"
 _BUILTIN_WORKSPACE_TEMPLATE = _ROLES_TEMPLATES_DIR / "default" / "workspace"
 _BUILTIN_PROFILE_TEMPLATE = _ROLES_TEMPLATES_DIR / "default" / "profile"
+_CUSTOM_TEMPLATES_SUBDIR = "admin/agent_templates"
 
 
 class WorkspaceService:
@@ -38,20 +39,34 @@ class WorkspaceService:
 
     # -- Provisioning --
 
+    def _resolve_template_root(self, template: str) -> Path | None:
+        """Locate a template directory by id, checking built-in roles first then custom."""
+        builtin = _ROLES_TEMPLATES_DIR / template
+        if builtin.is_dir():
+            return builtin
+        custom = get_storage_root(self._storage) / _CUSTOM_TEMPLATES_SUBDIR / template
+        if custom.is_dir():
+            return custom
+        return None
+
     def _get_profile_template_dir(self, template: str | None = None) -> Path | None:
         if template:
-            role_profile = _ROLES_TEMPLATES_DIR / template / "profile"
-            if role_profile.is_dir():
-                return role_profile
+            root = self._resolve_template_root(template)
+            if root is not None:
+                role_profile = root / "profile"
+                if role_profile.is_dir():
+                    return role_profile
         if _BUILTIN_PROFILE_TEMPLATE.is_dir():
             return _BUILTIN_PROFILE_TEMPLATE
         return None
 
     def _get_workspace_template_dir(self, template: str | None = None) -> Path | None:
         if template:
-            role_workspace = _ROLES_TEMPLATES_DIR / template / "workspace"
-            if role_workspace.is_dir():
-                return role_workspace
+            root = self._resolve_template_root(template)
+            if root is not None:
+                role_workspace = root / "workspace"
+                if role_workspace.is_dir():
+                    return role_workspace
         if _BUILTIN_WORKSPACE_TEMPLATE.is_dir():
             return _BUILTIN_WORKSPACE_TEMPLATE
         return None

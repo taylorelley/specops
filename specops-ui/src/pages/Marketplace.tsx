@@ -1,18 +1,19 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { PageContainer, PageHeader, PlanIcon, TrashIcon } from "../components/ui";
-import { useTemplates, useSearchSkills, useSearchMcpServers, useSoftwareCatalog, useCustomSoftware, useAddCustomSoftware, useUpdateCustomSoftware, useDeleteCustomSoftware, usePlanTemplates, useCustomPlanTemplates, useDeleteCustomPlanTemplate, useCustomSkills, useDeleteCustomSkill, useCustomMcpServers, useDeleteCustomMcpServer } from "../lib/queries";
+import { useTemplates, useSearchSkills, useSearchMcpServers, useSoftwareCatalog, useCustomSoftware, useAddCustomSoftware, useUpdateCustomSoftware, useDeleteCustomSoftware, usePlanTemplates, useCustomPlanTemplates, useDeleteCustomPlanTemplate, useCustomSkills, useDeleteCustomSkill, useCustomMcpServers, useDeleteCustomMcpServer, useCustomAgentTemplates, useDeleteCustomAgentTemplate } from "../lib/queries";
 import CreateSpecialAgentModal from "../components/CreateSpecialAgentModal";
 import CreatePlanModal from "../components/CreatePlanModal";
 import TemplateDetailModal from "../components/TemplateDetailModal";
 import PlanTemplateDetailModal from "../components/PlanTemplateDetailModal";
 import AddPlanTemplateModal from "../components/AddPlanTemplateModal";
+import AddCustomAgentTemplateModal from "../components/AddCustomAgentTemplateModal";
 import AddCustomSkillModal from "../components/AddCustomSkillModal";
 import AddCustomMcpModal from "../components/AddCustomMcpModal";
 import InstallSkillModal from "../components/InstallSkillModal";
 import InstallMcpModal from "../components/InstallMcpModal";
 import InstallSoftwareModal from "../components/InstallSoftwareModal";
-import type { MarketplaceSkill, MCPRegistryServer, SoftwareCatalogEntry, AddCustomSoftwarePayload, PlanTemplate, CustomSkillEntry, CustomMcpEntry } from "../lib/types";
+import type { MarketplaceSkill, MCPRegistryServer, SoftwareCatalogEntry, AddCustomSoftwarePayload, PlanTemplate, CustomSkillEntry, CustomMcpEntry, AgentTemplateListItem, CustomAgentTemplate } from "../lib/types";
 import {
   HiOutlineCommandLine,
   HiOutlineCodeBracket,
@@ -263,9 +264,29 @@ function PlanTemplatesTab() {
   );
 }
 
-function TemplatesTab({ templates, isLoading }: { templates: { value: string; label: string }[]; isLoading: boolean }) {
+function TemplatesTab({ templates, isLoading }: { templates: AgentTemplateListItem[]; isLoading: boolean }) {
   const [detailTemplate, setDetailTemplate] = useState<string | null>(null);
   const [createTemplate, setCreateTemplate] = useState<string | null>(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [editEntry, setEditEntry] = useState<CustomAgentTemplate | null>(null);
+  const { data: customEntries = [] } = useCustomAgentTemplates();
+  const deleteMutation = useDeleteCustomAgentTemplate();
+  const customById = new Map(customEntries.map((e) => [e.id, e]));
+
+  function handleDelete(t: AgentTemplateListItem) {
+    if (
+      window.confirm(
+        `Remove "${t.label}" from your agent templates? Existing agents created from it keep their files.`,
+      )
+    ) {
+      deleteMutation.mutate(t.value);
+    }
+  }
+
+  function handleEdit(value: string) {
+    const entry = customById.get(value);
+    if (entry) setEditEntry(entry);
+  }
 
   if (isLoading) {
     return <p className="text-claude-text-muted text-sm">Loading templates...</p>;
@@ -273,31 +294,85 @@ function TemplatesTab({ templates, isLoading }: { templates: { value: string; la
 
   return (
     <>
+      <div className="flex items-center justify-between gap-4 mb-4">
+        <p className="text-sm text-claude-text-secondary">
+          Pre-built role templates for spawning agents. Create your own custom template with the
+          button on the right.
+        </p>
+        <button
+          onClick={() => setShowAdd(true)}
+          className={`${css.btn} flex items-center gap-1.5 border border-claude-border bg-claude-input hover:bg-claude-surface text-claude-text-primary text-xs shrink-0`}
+        >
+          <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+          </svg>
+          Add Custom
+        </button>
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-        {templates.map((t) => (
-          <button
-            key={t.value}
-            onClick={() => setDetailTemplate(t.value)}
-            className="rounded-xl border border-claude-border bg-claude-input p-4 hover:border-claude-accent/50 hover:shadow-sm transition-all text-left group"
-          >
-            <div className="flex items-center gap-3 mb-2">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-claude-accent/10 group-hover:bg-claude-accent/20 transition-colors">
-                <RoleIcon role={t.value} />
-              </div>
-              <div>
-                <h3 className="font-medium text-claude-text-primary">{t.label}</h3>
+        {templates.map((t) => {
+          const isCustom = t.custom === true;
+          return (
+            <div
+              key={t.value}
+              className="rounded-xl border border-claude-border bg-claude-input p-4 hover:border-claude-accent/50 hover:shadow-sm transition-all text-left group flex flex-col"
+            >
+              <button
+                type="button"
+                onClick={() => setDetailTemplate(t.value)}
+                className="flex items-start gap-3 text-left w-full"
+              >
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-claude-accent/10 group-hover:bg-claude-accent/20 transition-colors shrink-0">
+                  <RoleIcon role={t.value} />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <h3 className="font-medium text-claude-text-primary truncate">{t.label}</h3>
+                    {isCustom && (
+                      <span className="rounded px-1.5 py-px text-[10px] font-medium bg-claude-surface text-claude-text-muted ring-1 ring-claude-border">
+                        Custom
+                      </span>
+                    )}
+                  </div>
+                  <p className="mt-1 text-xs text-claude-text-secondary line-clamp-2">
+                    {isCustom
+                      ? customById.get(t.value)?.description ||
+                        "User-authored agent template."
+                      : `Pre-configured with ${t.label.toLowerCase()} skills and settings.`}
+                  </p>
+                </div>
+              </button>
+              <div className="mt-auto pt-3 flex items-center justify-between gap-2">
+                {isCustom ? (
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => handleEdit(t.value)}
+                      className="rounded-md px-2 py-1 text-[11px] text-claude-text-secondary hover:text-claude-text-primary hover:bg-claude-surface transition-colors"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => handleDelete(t)}
+                      className="rounded-md p-1 text-claude-border-strong hover:text-red-500 transition-all"
+                      title="Delete custom template"
+                    >
+                      <TrashIcon className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ) : (
+                  <span />
+                )}
+                <button
+                  onClick={() => setCreateTemplate(t.value)}
+                  className={`${css.btn} bg-claude-accent text-white hover:bg-claude-accent-hover text-xs px-3 py-1.5`}
+                >
+                  Create Agent
+                </button>
               </div>
             </div>
-            <p className="text-sm text-claude-text-secondary">
-              Pre-configured with {t.label.toLowerCase()} skills and settings.
-            </p>
-            <div className="mt-3 flex justify-end">
-              <span className="text-xs text-claude-accent opacity-0 group-hover:opacity-100 transition-opacity font-medium">
-                Create Agent →
-              </span>
-            </div>
-          </button>
-        ))}
+          );
+        })}
       </div>
 
       <TemplateDetailModal
@@ -311,6 +386,15 @@ function TemplatesTab({ templates, isLoading }: { templates: { value: string; la
         open={!!createTemplate}
         onClose={() => setCreateTemplate(null)}
         initialTemplate={createTemplate ?? undefined}
+      />
+
+      <AddCustomAgentTemplateModal
+        open={showAdd || !!editEntry}
+        onClose={() => {
+          setShowAdd(false);
+          setEditEntry(null);
+        }}
+        entryToEdit={editEntry}
       />
     </>
   );
