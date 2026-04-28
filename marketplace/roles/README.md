@@ -33,6 +33,10 @@ Role templates live under `marketplace/roles/{role}/profile` and
 | Business Analyst | `business-analyst/` | Requirements gathering, process improvement, stakeholder alignment |
 | Project Manager | `project-manager/` | Project tracking, resource management, delivery |
 | Solution Architect | `solution-architect/` | Customer solutions, integrations, technical pre-sales |
+| Communications Lead | `communications-lead/` | External/internal communications, crisis response, brand voice |
+| Root Cause Analyser | `root-cause-analyser/` | Incident investigation, failure analysis, RCA reporting |
+| System Administrator | `system-administrator/` | Server management, user accounts, patching, backup/recovery |
+| Network Engineer | `network-engineer/` | Network design, routing, firewalls, connectivity, monitoring |
 
 ## Template Structure
 
