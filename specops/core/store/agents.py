@@ -98,6 +98,13 @@ class AgentStore(BaseRepository[AgentDef]):
         )
         agent.base_path = agent.id
         agent.agent_token = secrets.token_urlsafe(32)
+        # Validate template up front so a bad template id doesn't leave an
+        # orphan agent row with a half-provisioned filesystem.
+        ws_service: WorkspaceService | None = None
+        if provision and self._storage:
+            ws_service = WorkspaceService(self._storage)
+            if template and ws_service._resolve_template_root(template) is None:
+                raise ValueError(f"Unknown agent template: {template!r}")
         d = _serialize_for_db(agent)
         cols = list(d.keys())
         placeholders = ", ".join("?" for _ in cols)
@@ -106,10 +113,8 @@ class AgentStore(BaseRepository[AgentDef]):
                 f"INSERT INTO {self.table_name} ({', '.join(cols)}) VALUES ({placeholders})",
                 [d[k] for k in cols],
             )
-        if provision and self._storage:
-            WorkspaceService(self._storage).provision(
-                agent.base_path, agent_id=agent.id, template=template
-            )
+        if ws_service is not None:
+            ws_service.provision(agent.base_path, agent_id=agent.id, template=template)
         return agent
 
     def update_agent(self, agent_id: str, **kwargs: object) -> AgentDef | None:

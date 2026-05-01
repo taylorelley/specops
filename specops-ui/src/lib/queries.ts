@@ -19,6 +19,7 @@ export const queryKeys = {
   planTemplates: ["plan-templates"] as const,
   customPlanTemplates: ["plan-templates", "custom"] as const,
   planTemplate: (id: string) => ["plan-templates", id] as const,
+  customAgentTemplates: ["templates", "custom"] as const,
   workspaceFiles: (id: string, root?: string) => ["agents", id, "workspace", root ?? "workspace"] as const,
   workspaceFile: (id: string, path: string) => ["agents", id, "workspace", path] as const,
   plans: ["plans"] as const,
@@ -443,6 +444,55 @@ export function useDeleteCustomPlanTemplate() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.customPlanTemplates });
       qc.invalidateQueries({ queryKey: queryKeys.planTemplates });
+    },
+  });
+}
+
+export function useCustomAgentTemplates() {
+  return useQuery({
+    queryKey: queryKeys.customAgentTemplates,
+    queryFn: () => api.templates.listCustom(),
+    staleTime: 30_000,
+  });
+}
+
+export function useAddCustomAgentTemplate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (entry: import("./types").CustomAgentTemplatePayload) =>
+      api.templates.create(entry),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.customAgentTemplates });
+      qc.invalidateQueries({ queryKey: queryKeys.templates });
+    },
+  });
+}
+
+export function useUpdateCustomAgentTemplate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      templateId,
+      entry,
+    }: {
+      templateId: string;
+      entry: import("./types").CustomAgentTemplatePayload;
+    }) => api.templates.update(templateId, entry),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: queryKeys.customAgentTemplates });
+      qc.invalidateQueries({ queryKey: queryKeys.templates });
+      qc.invalidateQueries({ queryKey: queryKeys.templateDetail(vars.templateId) });
+    },
+  });
+}
+
+export function useDeleteCustomAgentTemplate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (templateId: string) => api.templates.delete(templateId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.customAgentTemplates });
+      qc.invalidateQueries({ queryKey: queryKeys.templates });
     },
   });
 }
