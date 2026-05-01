@@ -134,15 +134,20 @@ async def create_agent_flat(
     store: AgentStore = Depends(get_agent_store),
     variables_store: AgentVariablesStore = Depends(get_agent_variables_store),
 ):
-    a = store.create_agent(
-        name=body.name,
-        owner_user_id=current.get("id", ""),
-        description=body.description,
-        provision=True,
-        template=body.template,
-        mode=body.mode,
-        color=body.color,
-    )
+    try:
+        a = store.create_agent(
+            name=body.name,
+            owner_user_id=current.get("id", ""),
+            description=body.description,
+            provision=True,
+            template=body.template,
+            mode=body.mode,
+            color=body.color,
+        )
+    except ValueError as exc:
+        # Currently raised by WorkspaceService.provision when an unknown
+        # template id was requested.
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     variables_store.upsert_variables(a.id, default_git_variables(a.name), secret_keys=frozenset())
     return _agent_response(a, None)
 

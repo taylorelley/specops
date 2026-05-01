@@ -59,12 +59,17 @@ class WorkspaceService:
         return None
 
     def _get_profile_template_dir(self, template: str | None = None) -> Path | None:
+        # When a specific template is requested, resolve it strictly: if it
+        # cannot be located (deleted, stale, malformed slug) return None instead
+        # of silently provisioning from the built-in default — that would leave
+        # the caller with a generic agent and no signal that the requested
+        # template went missing.
         if template:
             root = self._resolve_template_root(template)
-            if root is not None:
-                role_profile = root / "profile"
-                if role_profile.is_dir():
-                    return role_profile
+            if root is None:
+                return None
+            role_profile = root / "profile"
+            return role_profile if role_profile.is_dir() else None
         if _BUILTIN_PROFILE_TEMPLATE.is_dir():
             return _BUILTIN_PROFILE_TEMPLATE
         return None
@@ -72,10 +77,10 @@ class WorkspaceService:
     def _get_workspace_template_dir(self, template: str | None = None) -> Path | None:
         if template:
             root = self._resolve_template_root(template)
-            if root is not None:
-                role_workspace = root / "workspace"
-                if role_workspace.is_dir():
-                    return role_workspace
+            if root is None:
+                return None
+            role_workspace = root / "workspace"
+            return role_workspace if role_workspace.is_dir() else None
         if _BUILTIN_WORKSPACE_TEMPLATE.is_dir():
             return _BUILTIN_WORKSPACE_TEMPLATE
         return None
@@ -86,7 +91,15 @@ class WorkspaceService:
         Creates agents/{base_path}/.config/, profiles/, workspace/, .sessions/, .logs/
         and copies template files. Config from profile template goes to .config/agent.json.
         If template is set (e.g. "sre"), uses templates/roles/{template}/profile and workspace.
+
+        Raises ``ValueError`` when ``template`` is explicitly provided but cannot
+        be resolved (deleted or stale custom id, malformed slug). We refuse to
+        silently fall back to the built-in default in that case — the caller
+        asked for a specific role and should know if it's gone missing.
         """
+        if template and self._resolve_template_root(template) is None:
+            raise ValueError(f"Unknown agent template: {template!r}")
+
         root = get_storage_root(self._storage)
         agent_prefix = f"{AGENTS_DIR}/{base_path}"
         _ = root / agent_prefix  # agent_root, used implicitly via storage paths

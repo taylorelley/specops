@@ -358,6 +358,86 @@ class TestCustomAgentTemplateEndpoints:
         # Structured payload also redacted.
         assert detail["payload"]["mcp_servers"]["github"]["env"]["GITHUB_TOKEN"] == "***"
 
+    def test_put_roundtrip_preserves_redacted_secrets(
+        self, client: TestClient, auth_headers, isolated_data_dir: Path
+    ):
+        """Saving an edit after fetching a redacted GET must NOT wipe stored secrets.
+
+        Reproduces the round-trip:
+          1. Create a template with real secrets.
+          2. GET it (returns redacted ``***``).
+          3. PUT the redacted body verbatim back.
+          4. Real secrets are still on disk.
+        """
+        from specops.core.services.agent_template_service import CustomAgentTemplateService
+        from specops.core.storage import LocalStorage
+
+        storage = LocalStorage(str(isolated_data_dir))
+        svc = CustomAgentTemplateService(storage)
+        payload = _basic_payload()
+        payload["mcp_servers"] = {
+            "github": {
+                "command": "npx",
+                "args": ["-y", "@modelcontextprotocol/server-github"],
+                "env": {"GITHUB_TOKEN": "ghp_real_secret"},
+                "url": "",
+                "headers": {"Authorization": "Bearer real.jwt.value"},
+            }
+        }
+        payload["channels"] = {"telegram": {"enabled": True, "bot_token": "bot:realsecret"}}
+        svc.create(payload, skill_resolver=lambda _: None)
+
+        # Round-trip via the API: GET → PUT
+        get_resp = client.get("/api/templates/custom-data-scientist", headers=auth_headers)
+        assert get_resp.status_code == 200
+        redacted_body = get_resp.json()["payload"]
+        # Sanity: GET payload is redacted.
+        assert redacted_body["mcp_servers"]["github"]["env"]["GITHUB_TOKEN"] == "***"
+        # The PUT body needs the same shape as POST.
+        redacted_body.pop("id", None)
+        put_body = {**_basic_payload(), **redacted_body, "id": "custom-data-scientist"}
+        put_body["name"] = "Renamed Scientist"
+
+        put_resp = client.put(
+            "/api/templates/custom-data-scientist",
+            headers=auth_headers,
+            json=put_body,
+        )
+        assert put_resp.status_code == 200, put_resp.text
+
+        # On-disk secrets must still be the real values.
+        on_disk = svc.get("custom-data-scientist")
+        assert on_disk is not None
+        assert on_disk["mcp_servers"]["github"]["env"]["GITHUB_TOKEN"] == "ghp_real_secret"
+        assert (
+            on_disk["mcp_servers"]["github"]["headers"]["Authorization"] == "Bearer real.jwt.value"
+        )
+        assert on_disk["channels"]["telegram"]["bot_token"] == "bot:realsecret"
+        # And the unrelated change actually applied.
+        assert on_disk["name"] == "Renamed Scientist"
+
+    def test_put_drops_redacted_keys_with_no_existing_value(self, client: TestClient, auth_headers):
+        """If the PUT body contains a redacted key the service has never seen,
+        we drop the placeholder rather than persisting ``***``."""
+        client.post("/api/templates", headers=auth_headers, json=_basic_payload())
+        body = _basic_payload()
+        body["mcp_servers"] = {
+            "fresh": {
+                "command": "x",
+                "args": [],
+                "env": {"NEW_KEY": "***"},
+                "url": "",
+                "headers": {},
+            }
+        }
+        resp = client.put("/api/templates/custom-data-scientist", headers=auth_headers, json=body)
+        assert resp.status_code == 200
+        # Round-trip GET to confirm placeholder did not get persisted.
+        detail = client.get("/api/templates/custom-data-scientist", headers=auth_headers).json()[
+            "payload"
+        ]
+        assert "NEW_KEY" not in detail["mcp_servers"]["fresh"].get("env", {})
+
     def test_path_traversal_rejected_via_service(self, isolated_data_dir: Path):
         """Crafted ids with separators are rejected before any filesystem write."""
         from specops.core.services.agent_template_service import (
@@ -401,3 +481,31 @@ class TestProvisioningWithCustomTemplate:
         ws = WorkspaceService(LocalStorage(str(isolated_data_dir)))
         for bad in ("../etc", "..", "a/b", "default/../etc"):
             assert ws._resolve_template_root(bad) is None
+
+    def test_provision_raises_on_unknown_template(self, isolated_data_dir: Path):
+        """A specific template id that can't be resolved fails loudly instead of
+        silently provisioning the default seeds."""
+        from specops.core.services.workspace_service import WorkspaceService
+        from specops.core.storage import LocalStorage
+
+        ws = WorkspaceService(LocalStorage(str(isolated_data_dir)))
+        with pytest.raises(ValueError, match="Unknown agent template"):
+            ws.provision("agent-x", agent_id="agent-x", template="custom-does-not-exist")
+        # Agent dir was not created with default seeds.
+        assert not (isolated_data_dir / "agents" / "agent-x" / "profiles" / "AGENTS.md").is_file()
+
+    def test_create_agent_endpoint_returns_400_for_unknown_template(
+        self, client: TestClient, auth_headers
+    ):
+        """``POST /api/agents`` surfaces unknown-template as 400, not a 500
+        traceback or a half-provisioned agent."""
+        resp = client.post(
+            "/api/agents",
+            headers=auth_headers,
+            json={"name": "x", "template": "custom-does-not-exist"},
+        )
+        assert resp.status_code == 400
+        assert "Unknown agent template" in resp.json()["detail"]
+        # No agent was persisted.
+        listing = client.get("/api/agents", headers=auth_headers).json()
+        assert all(a.get("name") != "x" for a in listing)

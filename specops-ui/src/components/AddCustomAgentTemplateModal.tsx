@@ -60,6 +60,66 @@ function toIdSlug(name: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
+/** Deep-merge two plain-object trees. ``incoming`` wins on leaves. Arrays are
+ *  treated as opaque values (not merged element-wise) — for our payload this
+ *  matches semantics for `categories`, `skill_ids`, `args`, etc. */
+function deepMerge<T>(base: T, incoming: T): T {
+  if (
+    base &&
+    incoming &&
+    typeof base === "object" &&
+    typeof incoming === "object" &&
+    !Array.isArray(base) &&
+    !Array.isArray(incoming)
+  ) {
+    const out: Record<string, unknown> = { ...(base as Record<string, unknown>) };
+    for (const [k, v] of Object.entries(incoming as Record<string, unknown>)) {
+      const existing = (base as Record<string, unknown>)[k];
+      if (
+        existing &&
+        v &&
+        typeof existing === "object" &&
+        typeof v === "object" &&
+        !Array.isArray(existing) &&
+        !Array.isArray(v)
+      ) {
+        out[k] = deepMerge(existing, v);
+      } else {
+        out[k] = v;
+      }
+    }
+    return out as T;
+  }
+  return incoming;
+}
+
+/** Merge form output onto the snapshot taken when the modal opened so fields
+ *  the form doesn't model survive Save. ``mcp_servers``, ``skill_ids`` and
+ *  ``categories`` are replaced wholesale (deselecting an item must remove it),
+ *  but each retained MCP server is deep-merged with its original config so
+ *  per-server extras like ``enabledTools`` survive a round-trip. */
+function mergeOverOriginal(
+  original: CustomAgentTemplate,
+  incoming: CustomAgentTemplatePayload,
+): CustomAgentTemplatePayload {
+  const merged = deepMerge(
+    original as unknown as CustomAgentTemplatePayload,
+    incoming,
+  );
+  const originalMcp = original.mcp_servers ?? {};
+  const incomingMcp = incoming.mcp_servers ?? {};
+  const mergedMcp: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(incomingMcp)) {
+    const orig = originalMcp[key];
+    mergedMcp[key] = orig ? deepMerge(orig, value) : value;
+  }
+  merged.mcp_servers = mergedMcp as CustomAgentTemplatePayload["mcp_servers"];
+  merged.skill_ids = incoming.skill_ids;
+  merged.categories = incoming.categories;
+  merged.soul_md = incoming.soul_md;
+  return merged;
+}
+
 type McpServerStub = {
   command: string;
   args: string[];
@@ -138,6 +198,10 @@ export default function AddCustomAgentTemplateModal({
   const addMutation = useAddCustomAgentTemplate();
   const updateMutation = useUpdateCustomAgentTemplate();
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
+  // Snapshot the template at open-time so save can deep-merge fields the
+  // form doesn't model (e.g. defaults.maxToolOutputChars, channel-specific
+  // config, MCP enabledTools) instead of dropping them.
+  const [originalTemplate, setOriginalTemplate] = useState<CustomAgentTemplate | null>(null);
   const [error, setError] = useState("");
   const [skillQuery, setSkillQuery] = useState("");
   const [mcpQuery, setMcpQuery] = useState("");
@@ -151,6 +215,7 @@ export default function AddCustomAgentTemplateModal({
   useEffect(() => {
     if (!open) return;
     if (entryToEdit) {
+      setOriginalTemplate(entryToEdit);
       const idTail = entryToEdit.id.replace(/^custom-/, "");
       const defaults = entryToEdit.defaults ?? {};
       const tools = (entryToEdit.tools ?? {}) as Record<string, unknown>;
@@ -201,6 +266,7 @@ export default function AddCustomAgentTemplateModal({
       });
     } else {
       setForm(EMPTY_FORM);
+      setOriginalTemplate(null);
     }
     setError("");
     setSkillQuery("");
@@ -304,7 +370,7 @@ export default function AddCustomAgentTemplateModal({
       channels[c] = { enabled: true };
     }
 
-    return {
+    const fromForm: CustomAgentTemplatePayload = {
       id: derivedId,
       name: form.name.trim(),
       description: form.description.trim(),
@@ -330,6 +396,15 @@ export default function AddCustomAgentTemplateModal({
       agents_md: form.agentsMd,
       soul_md: form.soulMd.trim() ? form.soulMd : null,
     };
+
+    // The form models a subset of CustomAgentTemplate. When editing, deep-merge
+    // the form output onto a snapshot of the original template so fields the
+    // form doesn't expose (defaults.maxToolOutputChars, channel-specific
+    // config, MCP enabledTools, ...) don't get dropped on save.
+    if (originalTemplate) {
+      return mergeOverOriginal(originalTemplate, fromForm);
+    }
+    return fromForm;
   }
 
   async function handleSubmit(e: React.FormEvent) {

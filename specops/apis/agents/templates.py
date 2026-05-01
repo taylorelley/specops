@@ -16,7 +16,7 @@ from specops.core.services.agent_template_service import (
 )
 from specops.core.storage import StorageBackend
 from specops.deps import get_skill_registry, get_storage
-from specops_lib.config.helpers import redact
+from specops_lib.config.helpers import redact, restore_secrets_from_existing
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +90,81 @@ def _collect_files_with_content(base: Path) -> list[dict[str, str]]:
                     content = "(binary or unreadable)"
             out.append({"path": rel, "content": content})
     return out
+
+
+def _restore_mcp_secrets(incoming: dict[str, Any], existing: dict[str, Any] | None) -> None:
+    """In place: replace redacted-placeholder values in ``incoming.mcp_servers`` with
+    the values stored on disk. Prevents PUTs that round-tripped a redacted GET
+    from blanking out the real ``env`` / ``headers`` secrets.
+
+    For servers that have no on-disk equivalent (or fields the old config didn't
+    have), redacted placeholders are dropped rather than persisted as ``***``.
+    """
+    if not isinstance(incoming, dict):
+        return
+    incoming_mcp = incoming.get("mcp_servers")
+    existing_mcp = (existing or {}).get("mcp_servers") or {}
+    if not isinstance(incoming_mcp, dict):
+        return
+    if not isinstance(existing_mcp, dict):
+        existing_mcp = {}
+    for key, server in list(incoming_mcp.items()):
+        if not isinstance(server, dict):
+            continue
+        stored = existing_mcp.get(key)
+        stored_dict = stored if isinstance(stored, dict) else {}
+        for section_name in ("env", "headers"):
+            section = server.get(section_name)
+            if not isinstance(section, dict):
+                continue
+            stored_section = stored_dict.get(section_name)
+            stored_section = stored_section if isinstance(stored_section, dict) else {}
+            for k, v in list(section.items()):
+                if isinstance(v, str) and v.startswith("***"):
+                    if k in stored_section:
+                        section[k] = stored_section[k]
+                    else:
+                        # Drop the redaction placeholder rather than persisting it.
+                        del section[k]
+
+
+def _merge_for_update(incoming: dict[str, Any], existing: dict[str, Any] | None) -> dict[str, Any]:
+    """Prepare an update payload that preserves on-disk values for fields the
+    modal can redact (channel ``secret_fields``, mcp env/headers) or doesn't
+    model at all (e.g. ``defaults.maxToolOutputChars``, MCP ``enabledTools``).
+
+    The PUT contract is full-replacement, but the editable representation is
+    lossy (redacted reads + reduced UI form), so we deep-merge the incoming
+    structured fields onto the on-disk payload and then restore secrets that
+    came back as ``***``.
+    """
+    if not existing:
+        return incoming
+
+    def _deep_merge(dst: dict[str, Any], src: dict[str, Any]) -> dict[str, Any]:
+        out = dict(dst)
+        for k, v in src.items():
+            if isinstance(v, dict) and isinstance(out.get(k), dict):
+                out[k] = _deep_merge(out[k], v)
+            else:
+                out[k] = v
+        return out
+
+    merged = dict(existing)
+    for key, value in incoming.items():
+        if key in ("id",):
+            merged[key] = value
+            continue
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+
+    # Restore channel/provider secrets per schema secret_fields.
+    restore_secrets_from_existing(merged, existing)
+    # Restore MCP env/headers values that came back as ***.
+    _restore_mcp_secrets(merged, existing)
+    return merged
 
 
 def _redact_template_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -246,6 +321,11 @@ def update_custom_template(
         )
     service = CustomAgentTemplateService(storage)
     payload = body.model_dump(by_alias=False, exclude_none=False)
+    # The editable representation is lossy (redacted reads + reduced UI form);
+    # merge incoming over the on-disk payload so a Save never wipes secrets or
+    # fields the modal doesn't model.
+    existing = service.get(template_id)
+    payload = _merge_for_update(payload, existing)
     try:
         return service.update(template_id, payload, _make_skill_resolver(registry))
     except CustomAgentTemplateError as exc:
