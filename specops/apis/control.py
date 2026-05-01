@@ -160,18 +160,21 @@ async def control_ws(websocket: WebSocket) -> None:
                         continue
                     todo_col_ids = {c.id for c in p.columns if c.id.endswith("col-todo")}
                     pending = [
-                        t for t in (p.tasks or [])
+                        t
+                        for t in (p.tasks or [])
                         if t.agent_id == agent_id and t.column_id in todo_col_ids
                     ]
                     if pending:
                         try:
-                            await websocket.send_json({
-                                "type": "message",
-                                "text": build_plan_context_message(p, agent_id=agent_id),
-                                "session_key": f"plan:{p.id}",
-                                "channel": "admin",
-                                "chat_id": f"plan:{p.id}",
-                            })
+                            await websocket.send_json(
+                                {
+                                    "type": "message",
+                                    "text": build_plan_context_message(p, agent_id=agent_id),
+                                    "session_key": f"plan:{p.id}",
+                                    "channel": "admin",
+                                    "chat_id": f"plan:{p.id}",
+                                }
+                            )
                         except Exception as exc:
                             logging.getLogger(__name__).warning(
                                 "Failed to push plan context on heartbeat for agent %s: %s",

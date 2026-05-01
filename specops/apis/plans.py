@@ -25,6 +25,7 @@ from specops.core.plan_access import (
     require_plan_read,
     require_plan_write,
 )
+from specops.core.plan_context import build_plan_context_message
 from specops.core.store.agents import AgentStore
 from specops.core.store.plan_artifacts import PlanArtifactStore
 from specops.core.store.plans import PlanStore
@@ -40,7 +41,6 @@ from specops.deps import (
 )
 from specops_lib.activity import ActivityEvent
 from specops_lib.registry import get_plan_template_registry
-from specops.core.plan_context import build_plan_context_message
 
 _PLAN_LOG_POLL_INTERVAL = 0.3  # seconds between DB polls for new plan activity events
 
@@ -507,10 +507,8 @@ async def update_task(
 
     # When a task is assigned to an agent, ensure that agent is in plan.agent_ids
     new_agent_id = kwargs.get("agent_id")
-    newly_added_to_plan = False
     if new_agent_id and new_agent_id not in (plan.agent_ids or []):
         store.assign_agent(plan_id, new_agent_id)
-        newly_added_to_plan = True
 
     # If the plan is active and a task was assigned to an agent, send them the updated plan context
     if new_agent_id and plan.status == "active":
