@@ -148,13 +148,13 @@ async def control_ws(websocket: WebSocket) -> None:
 
         agent_config_store = AgentConfigStore(get_database(), fernet=_get_fernet())
         llm_provider_store = LLMProviderStore(get_database(), fernet=_get_fernet())
+        plan_store = PlanStore(get_database())
         agent = store.get_agent(agent_id)
 
         while True:
             data = await websocket.receive_json()
             msg_type = data.get("type")
             if msg_type == "heartbeat":
-                plan_store = PlanStore(get_database())
                 for p in plan_store.list_plans():
                     if p.status != "active" or agent_id not in (p.agent_ids or []):
                         continue

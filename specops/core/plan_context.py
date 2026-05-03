@@ -1,7 +1,14 @@
 """Shared utility for building per-agent plan context messages."""
 
+from __future__ import annotations
 
-def build_plan_context_message(plan, agent_id: str = "") -> str:
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from specops.core.domain.plan import PlanDef
+
+
+def build_plan_context_message(plan: PlanDef, agent_id: str = "") -> str:
     """Build a per-agent text message describing the plan and the agent's specific tasks."""
     my_tasks = [t for t in plan.tasks if t.agent_id == agent_id] if agent_id else []
 
