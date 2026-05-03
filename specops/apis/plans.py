@@ -25,7 +25,6 @@ from specops.core.plan_access import (
     require_plan_read,
     require_plan_write,
 )
-from specops.core.plan_context import build_plan_context_message
 from specops.core.store.agents import AgentStore
 from specops.core.store.plan_artifacts import PlanArtifactStore
 from specops.core.store.plans import PlanStore
@@ -153,7 +152,134 @@ def _plan_response(plan, *, effective_permission: str | None = None) -> dict:
     return data
 
 
-_build_plan_context_message = build_plan_context_message
+def _build_plan_context_message(plan, agent_id: str = "") -> str:
+    """Build a per-agent text message describing the plan and the agent's specific tasks."""
+    my_tasks = [t for t in plan.tasks if t.agent_id == agent_id] if agent_id else []
+
+    lines = [
+        f"# Plan: {plan.name}",
+        f"Plan ID: `{plan.id}`",
+        f"Status: {plan.status}",
+        "",
+        plan.description or "(No description)",
+        "",
+        "## Plan-scoped conversation",
+        "This thread is for this plan. Full history is here. Use get_plan(plan_id) for full board if needed.",
+        "",
+    ]
+
+    if agent_id:
+        lines.extend(
+            [
+                "## Your assigned tasks",
+                f"You have **{len(my_tasks)}** task(s) assigned to you on this plan.",
+                "**Work ONLY on tasks assigned to you.** Do not pick up or execute tasks assigned to other agents.",
+                "",
+            ]
+        )
+        if my_tasks:
+            for t in sorted(my_tasks, key=lambda t: t.position):
+                col_label = (
+                    "Todo"
+                    if t.column_id.endswith("col-todo")
+                    else "In Progress"
+                    if t.column_id.endswith("col-in-progress")
+                    else "Done"
+                    if t.column_id.endswith("col-done")
+                    else "Blocked"
+                    if t.column_id.endswith("col-blocked")
+                    else t.column_id
+                )
+                lines.append(f"- **[{t.id}]** {t.title} (status: {col_label})")
+                if t.description:
+                    lines.append(f"  {t.description}")
+            lines.append("")
+        else:
+            lines.append(
+                "No tasks are currently assigned to you. Check back after the plan creator assigns work."
+            )
+            lines.append("")
+
+    lines.append("## Full plan board")
+    for col in sorted(plan.columns, key=lambda c: c.position):
+        lines.append(f"\n### {col.title}  (column_id: `{col.id}`)")
+        tasks_in_col = [t for t in plan.tasks if t.column_id == col.id]
+        for t in sorted(tasks_in_col, key=lambda t: t.position):
+            assigned_marker = " ← **YOUR TASK**" if t.agent_id == agent_id and agent_id else ""
+            agent_label = f" (agent: {t.agent_id})" if t.agent_id else " (unassigned)"
+            desc = (
+                f": {t.description[:80]}..."
+                if t.description and len(t.description) > 80
+                else (f": {t.description}" if t.description else "")
+            )
+            lines.append(f"- Task ID `{t.id}`: {t.title}{agent_label}{assigned_marker}{desc}")
+
+    lines.extend(
+        [
+            "",
+            "## Your role",
+            "You are one of the agents assigned to this plan.",
+            "",
+            "**You CAN:** update your own tasks (move between columns, edit title/description), assign tasks to yourself, add and read artifacts, add comments, activate plans you are assigned to.",
+            "",
+            "**You CANNOT:** move tasks that are assigned to other agents, pause or deactivate plans (admin only), add or remove agents from the plan (admin only), delete plans or tasks or artifacts.",
+            "",
+            "## Communication",
+            "Use `add_task_comment` for all updates — status, blockers, handoffs. Use @agent_name to notify. Call `list_task_comments` before starting. Use `a2a_call` only for urgent real-time coordination.",
+            "",
+            "## Artifacts",
+            "Task deliverable: `add_plan_artifact(plan_id, name, content, task_id=task_id)`. Shared report: omit task_id. Use clear filenames (e.g. report.md).",
+            "",
+        ]
+    )
+    if plan.status == "paused":
+        lines.extend(
+            [
+                "**This plan is currently PAUSED by admin.** Do not create or update tasks on it. Wait for admin to re-activate the plan.",
+                "",
+            ]
+        )
+    elif plan.status == "active" and my_tasks:
+        cols = sorted(plan.columns, key=lambda c: c.position)
+        progress_col_id = cols[1].id if len(cols) > 1 else cols[0].id
+        done_col_id = cols[-1].id
+        lines.extend(
+            [
+                "## 🚀 Action required",
+                "The plan is **active**. You have tasks assigned to you — **start working on them now.**",
+                "Tasks follow: Context, Requirements, Definition of Done, Output. Report per the Output section (add_task_comment, add_plan_artifact).",
+                f"1. Move your task(s) to in-progress using `update_plan_task(plan_id, task_id, column_id='{progress_col_id}')`.",
+                "2. Do the actual work described in each task.",
+                "3. Save any output using `add_plan_artifact(plan_id, name, content, task_id=task_id)`. Use a `.md` filename (e.g. `report.md`) for text outputs so they render as Markdown in the browser.",
+                f"4. When done, move the task to the final column using `update_plan_task(plan_id, task_id, column_id='{done_col_id}')`.",
+                "5. Add a completion comment with `add_task_comment(plan_id, task_id, content)` summarising what you produced.",
+                "",
+                "Do NOT wait for further instructions. Start immediately.",
+                "",
+            ]
+        )
+    lines.extend(
+        [
+            "## Plan tools",
+            "- list_plan_assignees(plan_id) — list ALL available agents for task assignment (always call this before assigning)",
+            "- list_plans() — list all plans (shows status; respect paused plans)",
+            "- get_plan(plan_id) — get full plan details with tasks and assignments",
+            "- plan_query(plan_id?, assigned_to_me=True) — see only your assigned tasks",
+            "- create_plan(name, description?) — create a new plan (you are auto-assigned as coordinator)",
+            "- activate_plan(plan_id) — activate plan ONLY after user confirms 'start'; sends tasks to all assigned agents",
+            "- create_plan_task(plan_id, title, description) — create an UNASSIGNED task on the plan board",
+            "- assign_plan_task(plan_id, task_id, agent_id) — assign a task to any agent, including yourself (use list_plan_assignees first to get valid IDs)",
+            "- update_plan_task(plan_id, task_id, column_id?, title?, description?) — update a task's status or content (column_id changes only allowed on tasks assigned to you)",
+            "- add_plan_artifact(plan_id, name, content, task_id?) — save outputs or summaries to the plan",
+            "- list_plan_artifacts(plan_id, task_id?) — list all artifacts in a plan (optionally filtered by task)",
+            "- get_plan_artifact(plan_id, artifact_id) — download and read artifact content",
+            "- add_task_comment(plan_id, task_id, content) — PRIMARY way to communicate; use @agent_name to notify specific agents",
+            "- list_task_comments(plan_id, task_id) — read comments on a task (check this before starting work)",
+            "- a2a_discover() — list agents in your team for direct messaging (requires same team; may return empty)",
+            "- a2a_call(target_agent_id, message) — send direct real-time message to another agent (use comments for async)",
+        ]
+    )
+    return "\n".join(lines)
 
 
 @router.get("/api/plans")
@@ -464,6 +590,28 @@ async def update_task(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Task must be assigned to an agent before its status can be changed",
             )
+
+    # Validate that the requested column_id exists in this plan; resolve it eagerly so the
+    # store receives the full prefixed ID and _resolve_column_id never silently falls back.
+    if "column_id" in kwargs:
+        col_id_val = kwargs["column_id"]
+        matched_col = next(
+            (
+                c
+                for c in plan.columns
+                if c.id == col_id_val
+                or c.id.endswith(f"-{col_id_val}")
+                or c.id.endswith(col_id_val)
+            ),
+            None,
+        )
+        if not matched_col:
+            available = ", ".join(f"{c.title} ({c.id})" for c in plan.columns)
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Column '{col_id_val}' not found. Available columns: {available}",
+            )
+        kwargs["column_id"] = matched_col.id
 
     # Review gate enforcement (only when column_id is changing)
     entering_review_col = False

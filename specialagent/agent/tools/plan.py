@@ -587,8 +587,11 @@ class CreatePlanTaskTool(_PlanToolBase):
                 },
                 "column_id": {
                     "type": "string",
-                    "enum": ["col-todo", "col-in-progress", "col-done"],
-                    "description": "Column to place the task in (default: col-todo)",
+                    "description": (
+                        "Column to place the task in. Use the short column suffix shown in "
+                        "get_plan(plan_id) (e.g. 'col-todo', 'col-triage'). Defaults to the "
+                        "first column if omitted."
+                    ),
                 },
             },
             "required": ["plan_id", "title", "description"],
@@ -748,8 +751,11 @@ class UpdatePlanTaskTool(_PlanToolBase):
                 "task_id": {"type": "string", "description": "The task ID to update"},
                 "column_id": {
                     "type": "string",
-                    "enum": ["col-todo", "col-in-progress", "col-done"],
-                    "description": "New column (status)",
+                    "description": (
+                        "Move the task to this column. Use the exact column ID or short suffix "
+                        "shown in get_plan(plan_id) (e.g. 'col-done', 'col-verified'). "
+                        "Do NOT guess — always check get_plan(plan_id) first to see available columns."
+                    ),
                 },
                 "agent_id": {"type": "string", "description": "New agent assignment"},
                 "title": {"type": "string", "description": "New title (clear, imperative)"},
