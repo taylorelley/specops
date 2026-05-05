@@ -27,12 +27,14 @@ from specops.core.audit import log_agent_config_fetch
 from specops.core.database import get_database
 from specops.core.domain.agent import control_plane_overrides
 from specops.core.domain.runtime import AgentRuntimeBackend
+from specops.core.plan_context import build_plan_context_message
 from specops.core.providers_resolve import resolve_provider_ref
 from specops.core.runtimes.factory import RUNTIME_BACKENDS, get_runtime_backend
 from specops.core.storage import StorageBackend, get_storage_root
 from specops.core.store.agent_config import AgentConfigStore
 from specops.core.store.agents import AgentStore
 from specops.core.store.llm_providers import LLMProviderStore
+from specops.core.store.plans import PlanStore
 from specops.deps import _get_fernet, get_runtime, get_storage
 from specops_lib.activity import ActivityEvent, ActivityLogRegistry
 
@@ -149,13 +151,39 @@ async def control_ws(websocket: WebSocket) -> None:
 
         agent_config_store = AgentConfigStore(get_database(), fernet=_get_fernet())
         llm_provider_store = LLMProviderStore(get_database(), fernet=_get_fernet())
+        plan_store = PlanStore(get_database())
         agent = store.get_agent(agent_id)
 
         while True:
             data = await websocket.receive_json()
             msg_type = data.get("type")
             if msg_type == "heartbeat":
-                pass
+                for p in plan_store.list_plans():
+                    if p.status != "active" or agent_id not in (p.agent_ids or []):
+                        continue
+                    todo_col_ids = {c.id for c in p.columns if c.id.endswith("col-todo")}
+                    pending = [
+                        t
+                        for t in (p.tasks or [])
+                        if t.agent_id == agent_id and t.column_id in todo_col_ids
+                    ]
+                    if pending:
+                        try:
+                            await websocket.send_json(
+                                {
+                                    "type": "message",
+                                    "text": build_plan_context_message(p, agent_id=agent_id),
+                                    "session_key": f"plan:{p.id}",
+                                    "channel": "admin",
+                                    "chat_id": f"plan:{p.id}",
+                                }
+                            )
+                        except Exception as exc:
+                            logging.getLogger(__name__).warning(
+                                "Failed to push plan context on heartbeat for agent %s: %s",
+                                agent_id,
+                                exc,
+                            )
             elif msg_type == "request":
                 request_id = data.get("request_id", "")
                 action = data.get("action", "")

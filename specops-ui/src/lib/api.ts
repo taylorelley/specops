@@ -160,14 +160,23 @@ export const api = {
       }),
   },
   templates: {
-    list: () => request<{ value: string; label: string }[]>("/templates"),
+    list: () => request<import("./types").AgentTemplateListItem[]>("/templates"),
     detail: (id: string) =>
-      request<{
-        value: string;
-        label: string;
-        profileFiles: { path: string; content: string }[];
-        workspaceFiles: { path: string; content: string }[];
-      }>(`/templates/${id}`),
+      request<import("./types").AgentTemplateDetail>(`/templates/${id}`),
+    listCustom: () =>
+      request<import("./types").CustomAgentTemplate[]>("/templates/custom"),
+    create: (entry: import("./types").CustomAgentTemplatePayload) =>
+      post<import("./types").AgentTemplateListItem>("/templates", entry),
+    update: (templateId: string, entry: import("./types").CustomAgentTemplatePayload) =>
+      put<import("./types").AgentTemplateListItem>(
+        `/templates/${encodeURIComponent(templateId)}`,
+        entry,
+      ),
+    delete: (templateId: string) =>
+      request<{ ok: boolean; id: string }>(
+        `/templates/${encodeURIComponent(templateId)}`,
+        { method: "DELETE" },
+      ),
   },
   specialagents: {
     list: () => request<import("./types").AgentSummary[]>("/agents"),
